@@ -22,7 +22,9 @@ class CleanupOldData(Service):
         try:
             # Procura pela variável DATA_RETENTION_SECONDS
             retention_seconds = int(os.environ.get('Zato_DATA_RETENTION_SECONDS', DEFAULT_RETENTION_SECONDS))
-            self.logger.info(f'TEMPO LIDO PELA VARIAVEL DE AMBIENTE NO CLEANUP: {os.environ.get('Zato_DATA_RETENTION_SECONDS')}')
+            self.logger.info(
+                f"TEMPO LIDO PELA VARIAVEL DE AMBIENTE NO CLEANUP: {os.environ.get('Zato_DATA_RETENTION_SECONDS')}"
+            )
         except ValueError:
             retention_seconds = DEFAULT_RETENTION_SECONDS
 
@@ -41,23 +43,20 @@ class CleanupOldData(Service):
                 return
 
             conn = sqlite3.connect(DB_FILENAME)
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA busy_timeout = 5000;")
             cursor = conn.cursor()
 
             # 2. Executa a Deleção
             query = """
                 DELETE FROM sensor_data 
                 WHERE end_datetime <= ? 
-                AND aggregation_status = 0
+                AND aggregation_status = 2
             """
             
             cursor.execute(query, (cutoff_str,))
             deleted_count = cursor.rowcount
             conn.commit()
-
-            # Otimização do arquivo
-            if deleted_count > 0:
-                self.logger.info("Otimizando o arquivo do banco de dados (VACUUM)...")
-                cursor.execute("VACUUM")
 
             self.logger.info(f"LIMPEZA CONCLUÍDA: {deleted_count} registros removidos com sucesso.")
 
