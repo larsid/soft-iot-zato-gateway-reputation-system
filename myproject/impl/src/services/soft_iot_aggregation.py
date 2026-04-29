@@ -29,6 +29,8 @@ class AggregateSensorData(Service):
                 return
 
             conn = sqlite3.connect(DB_FILENAME)
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA busy_timeout = 5000;")
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
@@ -104,6 +106,20 @@ class AggregateSensorData(Service):
                 VALUES (?, ?, ?, ?, ?, 1)
             """
             cursor.execute(insert_sql, (sensor_id, device_id, str(avg_value), bucket_start, bucket_start))
+
+            # Marca como "já agregado" (status=2) todos os registros brutos (status=0)
+            # que pertencem ao bucket processado. Isso evita que o Cleanup remova dados
+            # antes da agregação e também impede reprocessamento.
+            update_raw_sql = """
+                UPDATE sensor_data
+                SET aggregation_status = 2
+                WHERE device_id = ?
+                  AND sensor_id = ?
+                  AND aggregation_status = 0
+                  AND start_datetime >= ?
+                  AND start_datetime < datetime(?, '+' || ? || ' seconds')
+            """
+            cursor.execute(update_raw_sql, (device_id, sensor_id, bucket_start, bucket_start, self.window_seconds))
             last_processed_time = last_entry
 
         cursor.execute("""
