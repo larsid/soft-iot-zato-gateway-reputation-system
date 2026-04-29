@@ -140,26 +140,26 @@ class LocalStorageController:
     def on_message(self, client, userdata, msg):
         try:
             topic = msg.topic
-            payload = msg.payload.decode('utf-8')
+            payload = msg.payload.decode('utf-8').strip()
 
-            if tatu_wrapper is None:
+            if not payload or tatu_wrapper is None:
                 return
 
-            # 1. Trata solicitação de conexão (Handshake do Python Device)
+            # Ignorar mensagens de controle/resposta do próprio gateway
+            if topic == "dev/CONNECTIONS/RES": 
+                return # Ignora apenas a confirmação de conexão
+
+            # Tratar Handshake
             if topic == "dev/CONNECTIONS":
                 self.handle_connect_request(payload)
-            
-            # 2. Trata conexão simples (Legado Java)
-            elif topic == "CONNECTED":
-                # Payload é apenas o ID string
-                self.handle_device_connected(payload)
+                return 
 
-            # 3. Trata respostas de dados (RES)
-            elif tatu_wrapper.is_tatu_response(payload):
+            # Tratar Respostas de Dados
+            if tatu_wrapper.is_tatu_response(payload):
                 self.handle_tatu_response(payload)
 
         except Exception as e:
-            self.logger.error(f"Erro ao processar mensagem MQTT: {e}", exc_info=True)
+            self.logger.error(f"Erro no processamento MQTT: {e}")
 
 
     def handle_connect_request(self, payload):
@@ -353,9 +353,9 @@ class LocalStorageController:
             self.logger.error(f"Erro SQL ao inserir dados: {e}")
 
     def handle_device_connected(self, device_id):
+        self.logger.info(f"ENTREI NO HANDLE_DEVICE_CONNECTED PARA O ID: '{device_id}'")
         """Envia requisição de FLOW quando um dispositivo conecta."""
         self.logger.info(f"Dispositivo conectado detectado: {device_id}")
-        self.logger.info(f"TEMPOS: {DEFAULT_COLLECTION_TIME} E {DEFAULT_PUBLISHING_TIME}")
         
         try:
             CONFIG_FILE_PATH = '/home/ubuntu/mapping_archives/devices_config/devices.json'
@@ -372,52 +372,49 @@ class LocalStorageController:
             # 2. Buscar dispositivo
             device_info = next((d for d in devices if d.get('id') == device_id), None)
             
-            # --- NOVO: Lógica de Auto-Cadastro ---
+            # Lógica de Auto-Cadastro 
             if not device_info:
-                self.logger.warning(f"Dispositivo {device_id} não encontrado. Verificando possibilidade de auto-cadastro...")
-                
-                # Verifica se temos os dados do CONNECT em memória
+                self.logger.warning(f"Dispositivo {device_id} não encontrado. Verificando auto-cadastro...")
                 if device_id in self.pending_registration:
-                    self.logger.info(f"Iniciando Auto-Provisioning para {device_id}...")
-                    
                     new_device_data = self.pending_registration.pop(device_id)
-                    new_device_data['id'] = device_id # Garante o ID
-                    
-                    # Aplica configurações genéricas (Defaults)
+                    new_device_data['id'] = device_id 
                     for sensor in new_device_data.get('sensors', []):
                         sensor['collection_time'] = DEFAULT_COLLECTION_TIME
                         sensor['publishing_time'] = DEFAULT_PUBLISHING_TIME
                     
-                    # Adiciona e Salva
                     devices.append(new_device_data)
                     self._save_devices_file(CONFIG_FILE_PATH, devices)
-                    
-                    # Atualiza a variável local para que o fluxo continue
                     device_info = new_device_data
-                    self.logger.info(f"Dispositivo {device_id} cadastrado e salvo com sucesso!")
+                    self.logger.info(f"Dispositivo {device_id} auto-cadastrado com sucesso!")
                 else:
-                    self.logger.error(f"Sem dados estruturais para auto-cadastrar {device_id}. Ignorando.")
+                    self.logger.error(f"Sem dados para auto-cadastrar {device_id}.")
                     return
-            # -------------------------------------
 
+            # 3. Envio dos comandos FLOW
             if device_info:
-                self.logger.info(f"Configuração encontrada para {device_id}. Enviando comando FLOW...")
                 sensors = device_info.get('sensors', [])
+                self.logger.info(f"Iniciando configuração de {len(sensors)} sensores para {device_id}...")
                 
                 for sensor in sensors:
-                    c_time = sensor.get('collection_time', DEFAULT_COLLECTION_TIME)
-                    p_time = sensor.get('publishing_time', DEFAULT_PUBLISHING_TIME)
-                    sensor_id = sensor.get('id')
+                    # 1. Garante que o ID do sensor seja uma string limpa (sem espaços ou quebras de linha)
+                    sensor_id = str(sensor.get('id')).strip()
                     
-                    flow_req = tatu_wrapper.build_tatu_flow_value_message(
-                        sensor_id, 
-                        int(c_time * 1000), 
-                        int(p_time * 1000)
-                    )
-                    time.sleep(5)
-                    topic = f"{tatu_wrapper.TOPIC_BASE}{device_id}"
-                    self.logger.info(f"Publicando no tópico {topic}: {flow_req}")
+                    c_time = int(sensor.get('collection_time', DEFAULT_COLLECTION_TIME) * 1000)
+                    p_time = int(sensor.get('publishing_time', DEFAULT_PUBLISHING_TIME) * 1000)
+                    
+                    # 2. JSON compacto 
+                    flow_body = json.dumps({"collect": c_time, "publish": p_time}, separators=(',', ':'))
+                    
+                    # 3. Formata a string garantindo espaços ÚNICOS entre os tokens
+                    flow_req = f"FLOW VALUE {sensor_id} {flow_body}"
+                    
+                    topic = f"dev/{device_id}"
+                    self.logger.info(f"Enviando para o Java (ID exato): '{sensor_id}'")
+                    
                     self.client.publish(topic, flow_req)
+                    time.sleep(0.2)
+                
+                self.logger.info(f"Todos os comandos de fluxo enviados para {device_id}")
 
         except Exception as e:
             self.logger.error(f"Erro ao tentar configurar dispositivo conectado: {e}")
