@@ -1,0 +1,94 @@
+[
+    {
+        "id": "sensor1",
+        "latitude": 0.0,
+        "longitude": 0.0,
+        "sensors": [
+            {
+                "id": "temperature",
+                "type": "temperature",
+                "collection_time": 10,
+                "publishing_time": 30
+            },
+            {
+                "id": "humidity",
+                "type": "humidity",
+                "collection_time": 20,
+                "publishing_time": 60
+            }
+        ]
+    },
+    {
+        "id": "sensor_tatu_v1",
+        "sensors": [
+            {
+                "id": "temp",
+                "type": "temperature",
+                "collection_time": 5,
+                "publishing_time": 25
+            }
+        ]
+    },
+    {
+        "id": "py_device_01",
+        "latitude": 57.23538438858077,
+        "longitude": 49.8686991471553,
+        "sensors": [
+            {
+                "id": "temperatureSensor",
+                "type": "Thermometer",
+                "collection_time": 2,
+                "publishing_time": 6
+            },
+            {
+                "id": "humiditySensor",
+                "type": "HumiditySensor",
+                "collection_time": 2,
+                "publishing_time": 6
+            },
+            {
+                "id": "pulseOxymeter",
+                "type": "PulseOxymeter",
+                "collection_time": 2,
+                "publishing_time": 6
+            },
+            {
+                "id": "windDirectionSensor",
+                "type": "WindDirectionSensor",
+                "collection_time": 2,
+                "publishing_time": 6
+            }
+        ]
+    },
+    {
+        "id": "py_device_10",
+        "latitude": 27.231499441578194,
+        "longitude": -124.23421880519805,
+        "sensors": [
+            {
+                "id": "temperatureSensor",
+                "type": "Thermometer",
+                "collection_time": 2,
+                "publishing_time": 6
+            },
+            {
+                "id": "humiditySensor",
+                "type": "HumiditySensor",
+                "collection_time": 2,
+                "publishing_time": 6
+            },
+            {
+                "id": "pulseOxymeter",
+                "type": "PulseOxymeter",
+                "collection_time": 2,
+                "publishing_time": 6
+            },
+            {
+                "id": "windDirectionSensor",
+                "type": "WindDirectionSensor",
+                "collection_time": 2,
+                "publishing_time": 6
+            }
+        ]
+    }
+]
