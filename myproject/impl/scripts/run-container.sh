@@ -63,6 +63,21 @@ export host_data_dir_archives_to_send='../../impl/src/archives/'
 export container_data_dir=/home/ubuntu/mapping_archives/devices_config/
 
 
+#========================================
+
+# Variáveis adicionadas
+
+export GATEWAY_REAL_IP="127.0.0.1"   # Tem que modificar 
+
+export TANGLE_API_IP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' api-tangle)"
+export TANGLE_API_PORT="3000"
+
+
+export ZMQ_IP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' zmq-tangle)"
+export ZMQ_PORT='5556'
+
+#========================================
+
 
 # Directory for auto-generated environment variables
 mkdir -p $host_root_dir/config/auto-generated
@@ -102,7 +117,11 @@ docker run                                                         \
     -e Zato_Build_Verbosity="$zato_build_verbosity"                \
     -e Zato_SAVE_DATA_ENABLED=$SAVE_DATA_ENABLED                   \
     -e Zato_DATA_RETENTION_SECONDS=$DATA_RETENTION_SECONDS         \
-    -e Zato_GATEWAY_REAL_IP="127.0.0.1"                            \
+    -e Zato_GATEWAY_REAL_IP=$GATEWAY_REAL_IP                       \
+    -e Zato_TANGLE_API_IP=$TANGLE_API_IP                           \
+    -e Zato_TANGLE_API_PORT=$TANGLE_API_PORT                       \
+    -e Zato_ZMQ_IP=$ZMQ_IP                                         \
+    -e Zato_ZMQ_PORT=$ZMQ_PORT                                     \
     --mount type=bind,source=$zato_project_root,target=$target/$env_name,readonly \
     --mount type=bind,source=$enmasse_file_full_path,target=$target/enmasse/enmasse.yaml,readonly \
     --mount type=bind,source=$host_root_dir/config/auto-generated/env.ini,target=$target/enmasse/env.ini,readonly \
