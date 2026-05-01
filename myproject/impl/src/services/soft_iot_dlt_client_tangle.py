@@ -2,6 +2,7 @@
 
 import os
 import requests
+import json
 
 from zato.server.service import Service
 
@@ -79,7 +80,6 @@ class DLTWriterService(DLTClientBaseService):
             self.response.payload = {"status": "error", "message": str(e)}
 
 
-
 class DLTIndexReaderService(DLTClientBaseService):
     """
     Serviço de busca de transações por índice (Substitui LedgerReader.java).
@@ -109,18 +109,29 @@ class DLTIndexReaderService(DLTClientBaseService):
             response = requests.get(url, timeout=10)
             
             if response.status_code == 200:
-
-                # Retorna a lista em formato JSON, caso as mensagens sejam encontradas.
                 if response.text and response.text.strip():
                     try:
-                        self.response.payload = response.json()
+                        raw_data = response.json()
+                        parsed_data = []
+                        
+                        # Itera sobre a lista de transações retornada
+                        for item in raw_data:
+                            if isinstance(item, dict) and 'data' in item:
+                                # Se o campo 'data' for uma string, tenta desserializar para JSON
+                                if isinstance(item['data'], str):
+                                    try:
+                                        item['data'] = json.loads(item['data'])
+                                    except json.JSONDecodeError:
+                                        self.logger.warning("Não foi possível decodificar o campo 'data' como JSON.")
+                            parsed_data.append(item)
+                            
+                        self.response.payload = parsed_data
+
                     except ValueError:
                         self.logger.warning(f"Resposta inválida do Hornet para o índice {index}")
                         self.response.payload = []
-
                 else:
                     self.response.payload = []
-
             else:
                 self.logger.error(f"Erro na API Hornet ({response.status_code}) ao ler índice {index}")
                 self.response.payload = []
@@ -155,23 +166,28 @@ class DLTIdReaderService(DLTClientBaseService):
         url = f"{self.base_url}/message/messageId/{message_id}"
         
         try:
-
             response = requests.get(url, timeout=10)
             
             if response.status_code == 200:
-
                 if response.text and response.text.strip():
-
                     try:
-                        self.response.payload = response.json()
+                        raw_data = response.json()
+                        
+                        # Verifica se é um dicionário e possui o campo 'data'
+                        if isinstance(raw_data, dict) and 'data' in raw_data:
+                            if isinstance(raw_data['data'], str):
+                                try:
+                                    raw_data['data'] = json.loads(raw_data['data'])
+                                except json.JSONDecodeError:
+                                    self.logger.warning("Não foi possível decodificar o campo 'data' como JSON.")
+                                    
+                        self.response.payload = raw_data
 
                     except ValueError:
                         self.logger.warning(f"Resposta JSON inválida para o ID: {message_id}")
                         self.response.payload = None
-
                 else:
                     self.response.payload = None
-
             else:
                 self.logger.error(f"Erro na API Hornet ({response.status_code}) ao buscar ID: {message_id}")
                 self.response.payload = None
@@ -179,7 +195,6 @@ class DLTIdReaderService(DLTClientBaseService):
         except Exception as e:
             self.logger.error(f"Falha na requisição de busca por ID {message_id}: {e}")
             self.response.payload = None
-
 
 # class ReputationGetValueService(Service):
 #     """
