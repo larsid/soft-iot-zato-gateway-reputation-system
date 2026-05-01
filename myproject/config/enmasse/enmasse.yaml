@@ -98,6 +98,12 @@ channel_rest:
     url_path: /soft-iot/id-manager
     data_format: json
 
+  # Node type
+  - name: node_type
+    service: soft-iot.node.evaluation
+    url_path: /soft-iot/evaluate
+    data_format: json
+
   # Teste
   # - name: test
   #   service: soft-iot.mapping.unit-test
