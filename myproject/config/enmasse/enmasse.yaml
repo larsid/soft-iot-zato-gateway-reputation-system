@@ -86,7 +86,17 @@ channel_rest:
     url_path: /soft-iot/dlt/zmq/start
     data_format: json
 
+  # K-Means
+  - name: kmeans_credibility_service
+    service: soft-iot.kmeans.credibility
+    url_path: /soft-iot/kmeans/credibility
+    data_format: json
 
+  # ID manager
+  - name: id_manager
+    service: soft-iot.id.manager
+    url_path: /soft-iot/id-manager
+    data_format: json
 
   # Teste
   # - name: test
@@ -94,17 +104,7 @@ channel_rest:
   #   url_path: /soft-iot/mapping/unit-test
   #   data_format: json
 
-  # K-Means
-  # - name: kmeans_credibility_service
-  #   service: soft-iot.kmeans.credibility
-  #   url_path: /soft-iot/kmeans/credibility
-  #   data_format: json
-
-  # ID manager
-  # - name: id_manager
-  #   service: soft-iot.id.manager
-  #   url_path: /soft-iot/id-manager
-  #   data_format: json
+  
 
 outgoing_rest:
 
@@ -154,6 +154,11 @@ external_scheduler:
     job_type: "interval_based"
     interval: 20
     unit: "minutes"
+
+  - name: "Inicialização do gerenciador de ID"
+    url: "http://localhost:11223/soft-iot/id-manager"
+    job_type: "one_time"
+    initial_delay: 5
 
   - name: "Inicialização do banco de dados"
     url: "http://localhost:11223/soft-iot/local-storage/start"
