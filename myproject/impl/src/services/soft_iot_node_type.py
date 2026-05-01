@@ -44,7 +44,7 @@ class NodeTypeManager:
 
         return cls._instance
 
-    def define_conduct(self, current_reputation=None):
+    def define_conduct(self):
         """
         Define a conduta baseada no tipo e na reputação (para o Perturbador).
         Reflete a lógica de Disturbing.java e Malicious.java.
@@ -68,11 +68,10 @@ class NodeTypeManager:
             
         # 4 - Perturbador (Lógica fiel ao Java)
         elif self._node_type == 4:
-            # No Java, o perturbador constrói reputação para depois atacar
-            threshold = float(os.environ.get('Zato_PERTURBATION_THRESHOLD', 0.5))
-            
-            # Se a reputação atual for maior que o limite, ele inicia o ataque
-            if current_reputation is not None and current_reputation >= threshold:
+            # No Java (Disturbing.java), o comportamento é probabilístico via honestyRate,
+            # alternando entre HONEST e MALICIOUS.
+            random_number = random.uniform(0, 100)
+            if random_number > self._honesty_rate:
                 self._current_conduct = "MALICIOUS"
             else:
                 self._current_conduct = "HONEST"
@@ -109,42 +108,48 @@ class NodeEvaluationService(Service):
         # Dados da avaliação 
         data = self.request.payload
         provider_id = data.get('provider_id')
-        original_value = data.get('value') # 1 para bom, 0 para ruim
-        credibility = data.get('credibility', 1.0)
-
-
-        current_rep = None
-        if nt_manager.node_type == 4:
-            # Busca a PRÓPRIA reputação na Tangle via DLT Client
-            rep_res = self.invoke('soft-iot.reputation.get_value', {'node_id': id_m.id})
-            current_rep = rep_res.get('reputation_value', 0.0)
-
+ 
+        service_evaluation = data.get('serviceEvaluation')
+        node_credibility = data.get('nodeCredibility')
+        evaluation_value = data.get('value')
 
         # Consultando condulta
-        nt_manager.define_conduct(current_reputation=current_rep)
+        nt_manager.define_conduct()
         conduct = nt_manager.current_conduct
 
         if conduct == "SELFISH":
             # Egoísta não avalia 
             self.logger.info(f"Nó Egoísta ignorando avaliação para {provider_id}")
-            return {"status": "ignored"}
+            self.response.payload = {"status": "ignored"}
+            return
 
-        final_value = original_value
+        final_service_evaluation = int(service_evaluation) if service_evaluation is not None else 0
+        final_evaluation_value = float(evaluation_value) if evaluation_value is not None else 0.0
         
         if conduct == "MALICIOUS":
             # Malicioso avalia como ruim
-            self.logger.info(f"Ataque Malicioso: Alterando avaliação de {original_value} para 0")
-            final_value = 0
+            self.logger.info(
+                f"Ataque Malicioso: Alterando avaliação de {final_service_evaluation} para 0"
+            )
+            final_service_evaluation = 0
+            final_evaluation_value = 0.0
 
         # Preparando transação para a Tangle
+        # source, group, type, target, serviceEvaluation, nodeCredibility, value (+ createdAt/publishedAt opcionais)
         evaluation_transaction = {
+            "source": id_m.id,
+            "group": id_m.group,
             "type": "REP_EVALUATION",
-            "origin": id_m.id,   
-            "group": id_m.group,   
-            "providerId": provider_id,
-            "value": final_value,
-            "credibility": credibility
+            "target": provider_id,
+            "serviceEvaluation": final_service_evaluation,
+            "nodeCredibility": float(node_credibility),
+            "value": final_evaluation_value,
+            "createdAt": int(data.get("createdAt", 0)) or None,
+            "publishedAt": int(data.get("publishedAt", 0)) or None,
         }
+        
+        # Remove campos None para evitar poluir o payload.
+        evaluation_transaction = {k: v for k, v in evaluation_transaction.items() if v is not None}
 
         # Envia para a Tangle 
         res = self.invoke('soft-iot.dlt.client.api.write', {
@@ -152,5 +157,6 @@ class NodeEvaluationService(Service):
             "data": evaluation_transaction
         })
 
-        return {"status": "success", "conduct_applied": conduct, "tangle_response": res}
+        self.response.payload = {"status": "success", "conduct_applied": conduct, "tangle_response": res}
+        return
     
