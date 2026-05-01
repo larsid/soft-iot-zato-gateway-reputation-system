@@ -76,6 +76,10 @@ export TANGLE_API_PORT="3000"
 export ZMQ_IP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' zmq-tangle)"
 export ZMQ_PORT='5556'
 
+export NODE_TYPE="1"
+export HONESTY_RATE="50"
+export GROUP="cloud/c1"
+
 #========================================
 
 
@@ -122,6 +126,9 @@ docker run                                                         \
     -e Zato_TANGLE_API_PORT=$TANGLE_API_PORT                       \
     -e Zato_ZMQ_IP=$ZMQ_IP                                         \
     -e Zato_ZMQ_PORT=$ZMQ_PORT                                     \
+    -e Zato_NODE_TYPE=$NODE_TYPE                                   \
+    -e Zato_HONESTY_RATE=$HONESTY_RATE                             \
+    -e Zato_GROUP=$GROUP                                           \
     --mount type=bind,source=$zato_project_root,target=$target/$env_name,readonly \
     --mount type=bind,source=$enmasse_file_full_path,target=$target/enmasse/enmasse.yaml,readonly \
     --mount type=bind,source=$host_root_dir/config/auto-generated/env.ini,target=$target/enmasse/env.ini,readonly \
