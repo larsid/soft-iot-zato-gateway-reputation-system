@@ -8,182 +8,206 @@ import os
 DB_FILENAME = "/opt/zato/env/soft_iot_data.db"
 
 class BaseAPIService(Service):
-    """ Classe base para conexao com banco e formatação """
+    """Classe base para conexão com banco e formatação."""
     
     def _get_conn(self):
         if not os.path.exists(DB_FILENAME):
             raise ValueError(f"Banco de dados não encontrado em {DB_FILENAME}")
         
-        conn = sqlite3.connect(DB_FILENAME)
-        conn.row_factory = sqlite3.Row # Permite acessar colunas por nome
+        # Adicionado timeout para evitar 'Database is locked' durante a agregação/cleanup
+        conn = sqlite3.connect(DB_FILENAME, timeout=5000)
+        conn.row_factory = sqlite3.Row 
+        
+        # Ativa o modo WAL para permitir leituras enquanto o storage escreve
+        conn.execute('PRAGMA journal_mode=WAL;')
         return conn
 
     def _format_rows(self, cursor):
-        """ Converte linhas do SQLite para lista de dicionários """
         results = []
         for row in cursor.fetchall():
             results.append(dict(row))
         return results
 
-class GetLastSensorData(BaseAPIService):
-    """
-    Retorna o último dado registrado para um sensor específico.
-    Equivalente Java: getLastSensorData(Device device, Sensor sensor)
-    """
-    name = 'soft-iot.api.get-last-data'
-
-    def handle(self):
+    def _require_device_and_sensor(self):
         device_id = self.request.payload.get('device_id')
         sensor_id = self.request.payload.get('sensor_id')
 
         if not device_id or not sensor_id:
             self.response.payload = {'error': 'device_id and sensor_id are required'}
             self.response.status_code = 400
+            return None, None
+
+        return device_id, sensor_id
+
+    def _get_last(self, device_id, sensor_id, *, aggregated=None):
+        """
+        aggregated:
+          - None: não filtra por aggregation_status
+          - True: aggregation_status = 1
+          - False: aggregation_status != 1
+        """
+        query = """
+            SELECT * FROM sensor_data
+            WHERE device_id = ? AND sensor_id = ?
+        """
+        params = [device_id, sensor_id]
+
+        if aggregated is True:
+            query += " AND aggregation_status = 1"
+        elif aggregated is False:
+            query += " AND aggregation_status != 1"
+
+        query += " ORDER BY start_datetime DESC LIMIT 1"
+
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            data = self._format_rows(cursor)
+            return data[0] if data else None
+        finally:
+            conn.close()
+
+    def _get_history(self, device_id, sensor_id, *, aggregated=None, start_date=None, end_date=None, limit=100, order="DESC"):
+        query = "SELECT * FROM sensor_data WHERE device_id = ? AND sensor_id = ?"
+        params = [device_id, sensor_id]
+
+        if aggregated is True:
+            query += " AND aggregation_status = 1"
+        elif aggregated is False:
+            query += " AND aggregation_status != 1"
+
+        if start_date:
+            query += " AND start_datetime >= ?"
+            params.append(start_date)
+
+        if end_date:
+            query += " AND end_datetime <= ?"
+            params.append(end_date)
+
+        if str(order).upper() not in {"ASC", "DESC"}:
+            order = "DESC"
+
+        query += f" ORDER BY start_datetime {order} LIMIT ?"
+        params.append(limit)
+
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            return self._format_rows(cursor)
+        finally:
+            conn.close()
+
+class GetLastData(BaseAPIService):
+    """Último dado sem filtrar agregação."""
+    name = 'soft-iot.api.get-last-data'
+
+    def handle(self):
+        device_id, sensor_id = self._require_device_and_sensor()
+        if not device_id:
             return
 
         try:
-            conn = self._get_conn()
-            cursor = conn.cursor()
-            
-            query = """
-                SELECT * FROM sensor_data 
-                WHERE device_id = ? AND sensor_id = ?
-                ORDER BY start_datetime DESC 
-                LIMIT 1
-            """
-            cursor.execute(query, (device_id, sensor_id))
-            data = self._format_rows(cursor)
-            
-            self.response.payload = {'data': data[0] if data else None}
-            
+            item = self._get_last(device_id, sensor_id, aggregated=None)
+            self.response.payload = {'data': item}
         except Exception as e:
-            self.logger.error(f"Erro na API GetLastSensorData: {e}")
+            self.logger.error(f"Erro na API GetLastData: {e}")
             self.response.payload = {'error': str(e)}
             self.response.status_code = 500
-        finally:
-            if 'conn' in locals(): conn.close()
 
 class GetSensorHistory(BaseAPIService):
     """
     Retorna histórico de dados com filtros opcionais de data.
-    Equivalente Java: getSensorDataByDateTime e getSensorData
     """
     name = 'soft-iot.api.get-history'
 
     def handle(self):
-        
-        device_id = self.request.payload.get('device_id')
-        sensor_id = self.request.payload.get('sensor_id')
-        start_date = self.request.payload.get('start_date') # Esperado formato ISO ou timestamp
+        device_id, sensor_id = self._require_device_and_sensor()
+        if not device_id:
+            return
+
+        start_date = self.request.payload.get('start_date')  # Esperado formato ISO ou timestamp
         end_date = self.request.payload.get('end_date')
         limit = self.request.payload.get('limit', 100)
 
-        if not device_id or not sensor_id:
-            self.response.payload = {'error': 'device_id and sensor_id are required'}
-            self.response.status_code = 400
-            return
-
         try:
-            conn = self._get_conn()
-            cursor = conn.cursor()
-            
-            # Construção dinâmica da query
-            query = "SELECT * FROM sensor_data WHERE device_id = ? AND sensor_id = ?"
-            params = [device_id, sensor_id]
-
-            if start_date:
-                query += " AND start_datetime >= ?"
-                params.append(start_date)
-            
-            if end_date:
-                query += " AND end_datetime <= ?"
-                params.append(end_date)
-
-            query += " ORDER BY start_datetime DESC LIMIT ?"
-            params.append(limit)
-
-            cursor.execute(query, params)
-            data = self._format_rows(cursor)
-            
+            data = self._get_history(
+                device_id,
+                sensor_id,
+                aggregated=None,
+                start_date=start_date,
+                end_date=end_date,
+                limit=limit,
+                order="DESC",
+            )
             self.response.payload = {'count': len(data), 'data': data}
-            
         except Exception as e:
             self.logger.error(f"Erro na API GetSensorHistory: {e}")
             self.response.payload = {'error': str(e)}
             self.response.status_code = 500
-        finally:
-            if 'conn' in locals(): conn.close()
 
-
-class GetSensorLastAggregatedData(BaseAPIService):
-    """
-    Retorna o conjunto de dados que foi agregado relacionado àquele sensor
-    Equivalente Java: getLastAggregatedSensorData(device, sensor)
-    """
-
-    name = 'soft-iot.api.get-sensor-last-aggregated-data'
+class GetLastRawSensorData(BaseAPIService):
+    """Última leitura bruta (não agregada)."""
+    name = 'soft-iot.api.get-last-sensor-data'
 
     def handle(self):
-        device_id = self.request.payload.get('device_id')
-        sensor_id = self.request.payload.get('sensor_id')
-
-        if not device_id or not sensor_id:
-            self.respose.payload = {'error': 'device_id and sensor_id are required'}
-            self.response.status_code = 400
+        device_id, sensor_id = self._require_device_and_sensor()
+        if not device_id:
             return
-        
+
         try:
-            conn = self._get_conn()
-            cursor = conn.cursor()
-
-            query = "SELECT * FROM sensor_data WHERE device_id = ? AND sensor_id = ? AND aggregation_status = ? ORDER BY start_datetime DESC LIMIT 1"
-            params = [device_id, sensor_id, 1]
-
-            cursor.execute(query, params)
-            data = self._format_rows(cursor)
-
-            self.response.payload = {'data': data[0] if data else None}
-
+            item = self._get_last(device_id, sensor_id, aggregated=False)
+            self.response.payload = {'data': item}
         except Exception as e:
-            self.logger.error(f"Erro na API GetSensorLastAggregatedData: {e}")
+            self.logger.error(f"Erro na API GetLastRawSensorData: {e}")
             self.response.payload = {'error': str(e)}
             self.response.status_code = 500
-        finally:
-            if 'conn' in locals(): conn.close()
 
-
-class GetSensorAggregatedData(BaseAPIService):
+class GetLastAggregatedData(BaseAPIService):
     """
-    Retorna o conjunto de dados que foi agregado relacionado àquele sensor
-    Equivalente Java: getAggregatedSensorData(device, sensor)
+    Retorna a última média calculada para o sensor.
     """
-
-    name = 'soft-iot.api.get-sensor-aggregated-data'
+    name = 'soft-iot.api.get-last-aggregated-data'
 
     def handle(self):
-        device_id = self.request.payload.get('device_id')
-        sensor_id = self.request.payload.get('sensor_id')
-
-        if not device_id or not sensor_id:
-            self.response.payload = {'error': 'device_id and sensor_id are required'}
-            self.response.status_code = 400
+        device_id, sensor_id = self._require_device_and_sensor()
+        if not device_id:
             return
-        
+
         try:
-            conn = self._get_conn()
-            cursor = conn.cursor()
-
-            query = "SELECT * FROM sensor_data WHERE device_id = ? AND sensor_id = ? AND aggregation_status = ? ORDER BY start_datetime ASC"
-            params = [device_id, sensor_id, 1]
-
-            cursor.execute(query, params)
-            data = self._format_rows(cursor)
-
-            self.response.payload = {'data': data[0] if data else None}
-
+            item = self._get_last(device_id, sensor_id, aggregated=True)
+            self.response.payload = {'data': item}
         except Exception as e:
-            self.logger.error(f"Erro na API GetSensorAggregatedData: {e}")
+            self.logger.error(f"Erro em GetLastAggregatedData: {e}")
             self.response.payload = {'error': str(e)}
             self.response.status_code = 500
-        finally:
-            if 'conn' in locals(): conn.close()
+
+class GetAggregatedHistory(BaseAPIService):
+    """Histórico agregado (lista)."""
+    name = 'soft-iot.api.get-all-aggregated-data'
+
+    def handle(self):
+        device_id, sensor_id = self._require_device_and_sensor()
+        if not device_id:
+            return
+
+        limit = self.request.payload.get('limit', 1000)
+        start_date = self.request.payload.get('start_date')
+        end_date = self.request.payload.get('end_date')
+
+        try:
+            data = self._get_history(
+                device_id,
+                sensor_id,
+                aggregated=True,
+                start_date=start_date,
+                end_date=end_date,
+                limit=limit,
+                order="ASC",
+            )
+            self.response.payload = {'count': len(data), 'data': data}
+        except Exception as e:
+            self.logger.error(f"Erro em GetAggregatedHistory: {e}")
+            self.response.payload = {'error': str(e)}
+            self.response.status_code = 500
