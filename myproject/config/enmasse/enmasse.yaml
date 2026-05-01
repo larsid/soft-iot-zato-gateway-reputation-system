@@ -2,34 +2,48 @@ security:
 groups:
 
 channel_rest:
+
+  # Agregação
   - name: local_storage_aggregation
     service: soft-iot.aggregation.service
     url_path: /soft-iot/local-storage/aggregation
     data_format: json
+
+  # Clean up
   - name: local_storage_cleanup
     service: soft-iot.cleanup.service
     url_path: /soft-iot/local-storage/cleanup
     data_format: json
-  - name: local_storage_get_aggregated_data
-    service: soft-iot.api.get-sensor-aggregated-data
-    url_path: /soft-iot/local-storage/get-aggregated-data
+
+  # Serviços da API
+  - name: local_storage_get_last_data
+    service: soft-iot.api.get-last-data
+    url_path: /soft-iot/devices/{device_id}/sensors/{sensor_id}/data/latest
     data_format: json
   - name: local_storage_get_history
     service: soft-iot.api.get-history
-    url_path: /soft-iot/local-storage/get-history
+    url_path: /soft-iot/devices/{device_id}/sensors/{sensor_id}/data
+    data_format: json
+  - name: local_storage_get_last_sensor_data
+    service: soft-iot.api.get-last-sensor-data
+    url_path: /soft-iot/devices/{device_id}/sensors/{sensor_id}/data/raw/latest
     data_format: json
   - name: local_storage_get_last_aggregated_data
-    service: soft-iot.api.get-sensor-last-aggregated-data
-    url_path: /soft-iot/local-storage/get-last-aggregated-data
+    service: soft-iot.api.get-last-aggregated-data
+    url_path: /soft-iot/devices/{device_id}/sensors/{sensor_id}/data/aggregated/latest
     data_format: json
-  - name: local_storage_get_last_data
-    service: soft-iot.api.get-last-data
-    url_path: /soft-iot/local-storage/get-last-data
+  - name: local_storage_get_all_aggregated_data
+    service: soft-iot.api.get-all-aggregated-data
+    url_path: /soft-iot/devices/{device_id}/sensors/{sensor_id}/data/aggregated
     data_format: json
+
+  # Start do local storage
   - name: local_storage_service_start
     service: soft-iot.storage.service
     url_path: /soft-iot/local-storage/start
     data_format: json
+
+  # Mapping devices
   - name: mapping_devices_get_device
     service: soft-iot.mapping.get-device
     url_path: /soft-iot/mapping-devices/get-device
@@ -38,14 +52,37 @@ channel_rest:
     service: soft-iot.mapping.list-devices
     url_path: /soft-iot/mapping-devices/list-devices
     data_format: json
-  - name: kmeans_credibility_service
-    service: soft-iot.kmeans.credibility
-    url_path: /soft-iot/kmeans/credibility
+
+  - name: mapping_devices_collect_data
+    service: soft-iot.mapping.send-get
+    url_path: /soft-iot/mapping/collect
     data_format: json
-  - name: id_manager
-    service: soft-iot.id.manager
-    url_path: /soft-iot/id-manager
+  - name: mapping_devices_start_flow
+    service: soft-iot.mapping.send-flow
+    url_path: /soft-iot/mapping/flow
     data_format: json
+  - name: mapping_devices_actuate
+    service: soft-iot.mapping.send-set
+    url_path: /soft-iot/mapping/actuate
+    data_format: json
+
+  # Teste
+  # - name: test
+  #   service: soft-iot.mapping.unit-test
+  #   url_path: /soft-iot/mapping/unit-test
+  #   data_format: json
+
+  # K-Means
+  # - name: kmeans_credibility_service
+  #   service: soft-iot.kmeans.credibility
+  #   url_path: /soft-iot/kmeans/credibility
+  #   data_format: json
+
+  # ID manager
+  # - name: id_manager
+  #   service: soft-iot.id.manager
+  #   url_path: /soft-iot/id-manager
+  #   data_format: json
 
 outgoing_rest:
 
@@ -99,3 +136,9 @@ external_scheduler:
     url: "http://localhost:11223/soft-iot/local-storage/start"
     job_type: "one_time"
     initial_delay: 15 # Espera 15s após o Zato subir para chamar
+
+  # - name: "Inicializando teste - Mapping Devices"
+  #   url: "http://localhost:11223/soft-iot/mapping/unit-test"
+  #   job_type: "one_time"
+  #   initial_delay: 15 # Espera 15s após o Zato subir para chamar
+
