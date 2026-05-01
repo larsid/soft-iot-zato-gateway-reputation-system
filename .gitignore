@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Local build/artifacts
+*.zip
+
+# Common Python envs
+.venv/
+venv/
+env/
+
+# Editor/OS
+.DS_Store
