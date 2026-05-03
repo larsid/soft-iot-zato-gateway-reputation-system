@@ -110,12 +110,18 @@ channel_rest:
     url_path: /soft-iot/reputation/credibility/{evaluator_id}
     data_format: json
 
+  # Service handler
+  - name: service_handler_calculate_reputation
+    service: soft-iot.reputation.task.calculate
+    url_path: /soft-iot/reputation/task/calculate-reputation
+    data_format: json
+
 
   # Teste
-  - name: test
-    service: soft-iot.test.credibility
-    url_path: /soft-iot/test
-    data_format: json
+  # - name: test
+  #   service: soft-iot.test.credibility
+  #   url_path: /soft-iot/test
+  #   data_format: json
 
   
 
@@ -185,8 +191,8 @@ external_scheduler:
 
   
 
-  - name: "Inicializando teste - Credibility manager"
-    url: "http://localhost:11223/soft-iot/test"
-    job_type: "one_time"
-    initial_delay: 20 # Espera 15s após o Zato subir para chamar
+  # - name: "Inicializando teste - Credibility manager"
+  #   url: "http://localhost:11223/soft-iot/test"
+  #   job_type: "one_time"
+  #   initial_delay: 20 # Espera 15s após o Zato subir para chamar
 
