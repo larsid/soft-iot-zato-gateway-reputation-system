@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
 
 import os
-import time
+import json
 from zato.server.service import Service
+
+
+STATE_FILE = '/tmp/gateway_reputation.json'
+
 
 class CalculateNodeReputationTask(Service):
     """
-    Equivalente exato ao CalculateNodeReputationTask.java.
     Calcula a reputação do próprio Gateway baseado nas avaliações da Tangle.
     """
     name = 'soft-iot.reputation.task.calculate'
@@ -14,29 +17,56 @@ class CalculateNodeReputationTask(Service):
     def handle(self):
         self.logger.info("Executando CalculateNodeReputationTask...")
 
-        # 1. Obtém o ID do PRÓPRIO Gateway (equivalente ao this.getId() do Java)
         identity_info = self.invoke('soft-iot.id.manager')
         my_gateway_id = identity_info.get('gateway_id')
 
         if not my_gateway_id:
-            self.logger.error("Erro: ID do Gateway não configurado.")
+            # Retorna o valor sob demanda (a escrita desnecessária de consenso na Tangle foi removida)
+            self.response.payload = {"status": "failure","justification": "no id"}
             return
 
-        self.logger.info(f"Calculando a própria reputação global para o ID: {my_gateway_id}")
-
-        # 2. Chama o Orchestrator passando o próprio ID como alvo
+        # Calcula a própria reputação
         rep_result = self.invoke('soft-iot.reputation.orchestrator', {'node_id': my_gateway_id})
 
         if rep_result.get('status') == 'success':
-            # 3. Atualiza o estado interno (equivalente ao this.setReputation(rep) do Java)
             my_current_reputation = rep_result.get('reputation')
             
-            self.logger.info(f"SUCESSO: Minha reputação global atualizada para {my_current_reputation}")
+            self._save_reputation_to_file(my_current_reputation)
             
-            # Aqui você deve salvar esse valor internamente para uso do Gateway
-            # Pode ser no Redis nativo do Zato ou gravar no SQLite do Gateway
-            # Exemplo de uso de cache simples do Zato:
-            self.cache.set('my_global_reputation', my_current_reputation)
-            
-        else:
-            self.logger.error(f"Falha ao calcular a reputação: {rep_result.get('message')}")
+            self.logger.info(f"SUCESSO: Minha reputação salva no arquivo local: {my_current_reputation}")
+
+            self.response.payload = {"status": "success"}
+
+    def _save_reputation_to_file(self, reputation_value):
+        """ Função auxiliar para gravar o valor no arquivo JSON """
+        state_data = {}
+        
+        if os.path.exists(STATE_FILE):
+            try:
+                with open(STATE_FILE, 'r') as f:
+                    state_data = json.load(f)
+            except Exception:
+                pass 
+                
+        # Atualiza a chave com o novo valor calculado
+        state_data['my_global_reputation'] = reputation_value
+        
+        # Grava o dicionário atualizado de volta no arquivo
+        try:
+            with open(STATE_FILE, 'w') as f:
+                json.dump(state_data, f, indent=4)
+        except Exception as e:
+            self.logger.error(f"Falha ao salvar no arquivo de estado: {e}")
+
+    def _get_my_reputation(self):
+        """ Função auxiliar para ler a reputação do arquivo """
+        if os.path.exists(STATE_FILE):
+            try:
+                with open(STATE_FILE, 'r') as f:
+                    state_data = json.load(f)
+                    return float(state_data.get('my_global_reputation', 0.5))
+            except Exception:
+                pass
+        
+        # Se o arquivo não existir ou falhar, retorna o valor inicial/neutro
+        return 0.5
