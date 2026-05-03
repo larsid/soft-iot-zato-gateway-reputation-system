@@ -115,6 +115,10 @@ channel_rest:
     service: soft-iot.reputation.task.calculate
     url_path: /soft-iot/reputation/task/calculate-reputation
     data_format: json
+  - name: service_handler_change_disturbing_behavior
+    service: soft-iot.reputation.task.change_disturbing_behavior
+    url_path: /soft-iot/reputation/task/change-disturbing-behavior
+    data_format: json
 
 
   # Teste
