@@ -98,46 +98,86 @@ class ReputationOrchestrator(Service):
 class CredibilityManager(Service):
     """
     Gerencia a credibilidade de quem avalia.
+    Implementa as lógicas de Reliability (Confiabilidade) e Consistency (Consistência).
     """
     name = 'soft-iot.reputation.credibility.manager'
 
     def handle(self):
+        # Coleta dos dados de entrada do payload
         payload = self.request.payload
-        evaluator_id = payload.get('evaluator_id')
+        evaluator_id = payload.get('evaluator_id') # ID do nó avaliador
         
+        # Parâmetros para o cálculo
         current_cred = float(payload.get('current_credibility', 0.5))
         evaluation_given = float(payload.get('evaluation_given', 0.0)) # Nota atual
-        last_evaluation_given = float(payload.get('last_evaluation_given', evaluation_given)) # Nota anterior do MESMO avaliador
-        consensus_reputation = float(payload.get('consensus_reputation', 0.0)) # Verdade da rede
+        consensus_reputation = float(payload.get('consensus_reputation', 0.0)) # Valor de consenso da rede
 
-        # Confiabilidade: Comparação com a verdade da rede (Consenso)
+        # --- LÓGICA DE CONSISTÊNCIA (C(n)) ---
+        # Inicializa com o valor atual para caso não exista histórico (Consistência neutra = 1.0)
+        last_evaluation_given = evaluation_given 
+        eval_history = []
+        
+        self.logger.info(f"Buscando histórico na Tangle para o avaliador: {evaluator_id}")
+        
+        # Invoca o serviço de leitura da Tangle usando o ID do avaliador como índice
+        history = self.invoke('soft-iot.dlt.client.api.read_index', {'index': evaluator_id})
+        
+        # Tratamento robusto para evitar erros 'NoneType is not iterable'
+        if history and isinstance(history, list):
+            for tx in history:
+                if isinstance(tx, dict):
+                    data_content = tx.get('data', {})
+                    
+                    # Filtra apenas transações do tipo REP_EVALUATION
+                    if isinstance(data_content, dict) and data_content.get('type') == 'REP_EVALUATION':
+                        eval_history.append(data_content)
+            
+            # Se houver histórico, extrai a nota da última avaliação realizada
+            if len(eval_history) > 0:
+                last_tx = eval_history[-1]
+                last_evaluation_given = float(last_tx.get('value', evaluation_given))
+                self.logger.info(f"Última avaliação encontrada para {evaluator_id}: {last_evaluation_given}")
+
+        # 1. Confiabilidade: Comparação entre a nota dada e o consenso da rede
         reliability = 1.0 - abs(consensus_reputation - evaluation_given)
         
-        # Consistência: Comparação com a própria nota anterior (Histórico do Avaliador)
-        # Conforme implementado em NodeCredibility.java
+        # 2. Consistência: Comparação entre a nota atual e a conduta anterior do mesmo nó
         consistency = 1.0 - abs(evaluation_given - last_evaluation_given)
 
-        # Thresholds (Limiares) definidos no .cfg do Java
-        RELIABILITY_THRESHOLD = 0.75
-        CONSISTENCY_THRESHOLD = 0.75
+        # 3. Limiares de decisão (Thresholds) via variáveis de ambiente (Paridade com .cfg)
+        env_rel_threshold = os.environ.get('Zato_RELIABILITY_THRESHOLD', '0.75')
+        env_con_threshold = os.environ.get('Zato_CONSISTENCY_THRESHOLD', '0.75')
+        
+        RELIABILITY_THRESHOLD = float(env_rel_threshold)
+        CONSISTENCY_THRESHOLD = float(env_con_threshold)
 
         new_cred = current_cred
 
-        # Lógica de Bonificação/Penalidade fiel ao Java
+        # 4. Lógica de Bonificação e Penalidade (Fiel ao NodeCredibility.java)
         if reliability >= RELIABILITY_THRESHOLD and consistency >= CONSISTENCY_THRESHOLD:
-            new_cred += 0.10
+            # Caso ideal: Confiável e Consistente
+            new_cred = new_cred + 0.10
         elif reliability >= RELIABILITY_THRESHOLD:
-            new_cred += 0.05
+            # Confiável mas mudou o padrão de comportamento
+            new_cred = new_cred + 0.05
         elif reliability < RELIABILITY_THRESHOLD and consistency >= CONSISTENCY_THRESHOLD:
-            new_cred -= 0.10
+            # Consistente no erro (Provável ataque direcionado ou persistente)
+            new_cred = new_cred - 0.10
         else:
-            new_cred -= 0.05
+            # Falha em ambos os critérios
+            new_cred = new_cred - 0.05
 
-        new_cred = max(-1.0, min(1.0, new_cred))
+        # Garante que a credibilidade permaneça no intervalo [-1.0, 1.0]
+        if new_cred > 1.0:
+            new_cred = 1.0
+        elif new_cred < -1.0:
+            new_cred = -1.0
 
+        # Resposta final do serviço
         self.response.payload = {
             "evaluator_id": evaluator_id,
             "new_credibility": round(new_cred, 4),
             "reliability": round(reliability, 4),
-            "consistency": round(consistency, 4)
+            "consistency": round(consistency, 4),
+            "history_count": len(eval_history)
         }
