@@ -81,64 +81,49 @@ class DLTWriterService(DLTClientBaseService):
 
 
 class DLTIndexReaderService(DLTClientBaseService):
-    """
-    Serviço de busca de transações por índice (Substitui LedgerReader.java).
-    """
     name = 'soft-iot.dlt.client.api.read_index'
 
     def handle(self):
-        """
-        Leitura de mensagens por índice.
-        """
-
         self._ensure_configs()
-
-        # Coleta do índice pelo corpo ou pelos parâmetros da URL.
         request_data = self.request.payload or self.request.params
         index = request_data.get('index')
 
         if not index:
             self.logger.error("Índice não fornecido para busca.")
-            self.response.payload = []
+            self.response.payload = [] # Garante lista vazia
             return
 
-        # Endpoint de busca das mensagens por índice.
         url = f"{self.base_url}/message/{index}"   
         
         try:
             response = requests.get(url, timeout=10)
             
-            if response.status_code == 200:
-                if response.text and response.text.strip():
-                    try:
-                        raw_data = response.json()
-                        parsed_data = []
-                        
-                        # Itera sobre a lista de transações retornada
-                        for item in raw_data:
-                            if isinstance(item, dict) and 'data' in item:
-                                # Se o campo 'data' for uma string, tenta desserializar para JSON
-                                if isinstance(item['data'], str):
-                                    try:
-                                        item['data'] = json.loads(item['data'])
-                                    except json.JSONDecodeError:
-                                        self.logger.warning("Não foi possível decodificar o campo 'data' como JSON.")
-                            parsed_data.append(item)
-                            
-                        self.response.payload = parsed_data
-
-                    except ValueError:
-                        self.logger.warning(f"Resposta inválida do Hornet para o índice {index}")
+            if response.status_code == 200 and response.text.strip():
+                try:
+                    raw_data = response.json()
+                    # Se raw_data for None ou não for lista, retorna lista vazia
+                    if not isinstance(raw_data, list):
                         self.response.payload = []
-                else:
+                        return
+
+                    parsed_data = []
+                    for item in raw_data:
+                        if isinstance(item, dict) and 'data' in item:
+                            if isinstance(item['data'], str):
+                                try:
+                                    item['data'] = json.loads(item['data'])
+                                except json.JSONDecodeError:
+                                    pass
+                        parsed_data.append(item)
+                    self.response.payload = parsed_data
+                except ValueError:
                     self.response.payload = []
             else:
-                self.logger.error(f"Erro na API Hornet ({response.status_code}) ao ler índice {index}")
+                # Caso de erro HTTP ou resposta vazia
                 self.response.payload = []
-
         except Exception as e:
             self.logger.error(f"Falha na leitura do índice {index}: {e}")
-            self.response.payload = []
+            self.response.payload = [] 
 
 
 class DLTIdReaderService(DLTClientBaseService):
