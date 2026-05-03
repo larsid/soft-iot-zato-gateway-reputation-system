@@ -86,20 +86,6 @@ class ReputationOrchestrator(Service):
         # Garante o limite estrito do intervalo [-1.0, 1.0]
         final_reputation = max(-1.0, min(1.0, final_reputation))
 
-        # 5. Publica o Consenso na Tangle para conhecimento da rede
-        # Isso permite que outros Gateways vejam a sua conclusão sobre o nó alvo
-        self.invoke('soft-iot.dlt.client.api.write', {
-            'index': target_node_id,
-            'data': {
-                'type': 'REP_CONSENSUS',
-                'value': round(final_reputation, 4),
-                'node_id': target_node_id,
-                'calculated_by': self.invoke('soft-iot.id.manager').get('gateway_id')
-            }
-        })
-
-        self.logger.info(f"Consenso de reputação para {target_node_id} publicado na Tangle.")
-
         # Retorna o valor sob demanda (a escrita desnecessária de consenso na Tangle foi removida)
         self.response.payload = {
             "node_id": target_node_id,
