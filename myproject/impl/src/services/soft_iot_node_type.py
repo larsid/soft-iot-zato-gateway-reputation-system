@@ -37,6 +37,8 @@ class NodeTypeManager:
                     # Valor inicial da conduta
                     cls._instance._current_conduct = "HONEST"
                     
+                    cls._instance.behavior_changed = False
+
                     logger.info(f"NodeTypeManager iniciado - Tipo: {cls._instance._node_type} - Taxa de honestidade: {cls._instance._honesty_rate}%")
                     
                     # Inicializa a conduta baseada no tipo
@@ -68,12 +70,15 @@ class NodeTypeManager:
             
         # 4 - Perturbador (Lógica fiel ao Java)
         elif self._node_type == 4:
-            # No Java (Disturbing.java), o comportamento é probabilístico via honestyRate,
-            # alternando entre HONEST e MALICIOUS.
-            random_number = random.uniform(0, 100)
-            if random_number > self._honesty_rate:
-                self._current_conduct = "MALICIOUS"
+            if self.behavior_changed:
+                # Segunda Fase: Atingiu o limiar. Começa a perturbar baseado na taxa.
+                random_number = random.uniform(0, 100)
+                if random_number > self._honesty_rate:
+                    self._current_conduct = "MALICIOUS"
+                else:
+                    self._current_conduct = "HONEST"
             else:
+                # Primeira Fase: Finge ser 100% honesto para acumular reputação.
                 self._current_conduct = "HONEST"
 
 
