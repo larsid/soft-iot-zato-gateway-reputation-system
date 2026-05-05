@@ -79,14 +79,13 @@ class ReputationOrchestrator(Service):
         if not trusted_evaluations:
             trusted_evaluations = valid_evaluations  # Fallback de segurança
 
-        # 4. Calcula a Reputação Final: Média aritmética dos 'values' do cluster confiável
+        # 4. Calcula a Reputação Final: Média aritmética das avaliações dos nós presentes no cluster confiável
         soma_valores = sum(ev['value'] for ev in trusted_evaluations)
         final_reputation = soma_valores / len(trusted_evaluations)
 
         # Garante o limite estrito do intervalo [-1.0, 1.0]
         final_reputation = max(-1.0, min(1.0, final_reputation))
-
-        # Retorna o valor sob demanda (a escrita desnecessária de consenso na Tangle foi removida)
+        
         self.response.payload = {
             "node_id": target_node_id,
             "reputation": round(final_reputation, 4),
