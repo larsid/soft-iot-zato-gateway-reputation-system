@@ -119,6 +119,16 @@ channel_rest:
     service: soft-iot.reputation.task.change_disturbing_behavior
     url_path: /soft-iot/reputation/task/change-disturbing-behavior
     data_format: json
+  - name: service_handler_check_devices
+    service: soft-iot.reputation.task.check_devices
+    url_path: /soft-iot/reputation/task/check-devices
+    data_format: json
+
+  # Serviço de debug temporário
+  - name: service_handler_get_data_gateway
+    service: soft-iot.reputation.state.get_all
+    url_path: /soft-iot/reputation/task/get-data
+    data_format: json
 
 
   # Teste
