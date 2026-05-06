@@ -80,8 +80,45 @@ class ServiceHandlerBaseService(Service):
             except Exception:
                 pass
         return []
-    
-    
+
+    def _register_pending_request(self, service_type):
+        """Registra um ticket no arquivo local contendo o timestamp de início da espera."""
+        data = {}
+        if os.path.exists(self.STATE_FILE):
+            try:
+                with open(self.STATE_FILE, 'r') as f:
+                    data = json.load(f)
+            except Exception:
+                pass
+
+        # Cria o objeto de rastreamento com a data e hora precisas
+        data['pending_node_request'] = {
+            'service_requested': service_type,
+            'timestamp': datetime.datetime.now().isoformat(),
+            'status': 'WAITING_RESPONSES'
+        }
+
+        try:
+            with open(self.STATE_FILE, 'w') as f:
+                json.dump(data, f, indent=4)
+        except Exception as e:
+            self.logger.error(f"Falha ao registrar ticket de timeout: {e}")
+        
+    def _is_waiting_responses(self):
+        """Verifica no arquivo de estado se o nó já está aguardando uma resposta de outro Gateway."""
+        if os.path.exists(self.STATE_FILE):
+            try:
+                with open(self.STATE_FILE, 'r') as f:
+                    data = json.load(f)
+                    pending = data.get('pending_node_request')
+                    
+                    if pending and pending.get('status') == 'WAITING_RESPONSES':
+                        return True
+            except Exception as e:
+                self.logger.error(f"Erro ao verificar estado de requisição: {e}")
+        return False
+           
+           
 class CalculateNodeReputationTask(ServiceHandlerBaseService):
     """
     Calcula a reputação do próprio Gateway baseado nas avaliações da Tangle.
@@ -255,3 +292,70 @@ class GetGatewayStateService(ServiceHandlerBaseService):
                 "status": "error",
                 "message": "Falha interna ao acessar o arquivo de estado."
             }
+
+
+class CheckNodesServicesTask(ServiceHandlerBaseService):
+    """
+    Sorteia um serviço de interesse e publica uma requisição de busca (Broadcast) na Tangle.
+    """
+    name = 'soft-iot.reputation.task.check_nodes_services'
+
+    def handle(self):
+        self.logger.info("Executando CheckNodesServicesTask (Requisição de Serviços)...")
+
+        # 1. Bloqueio de Concorrência: Verifica se já existe um pedido em andamento
+        if self._is_waiting_responses():
+            self.logger.info("Bloqueio ativo: Já existe uma requisição pendente. Aguardando timeout ou resposta.")
+            return
+
+        # 2. Lista fixa de serviços e cálculo de escolha aleatória
+        available_services = [
+            "temperatureSensor",
+            "humiditySensor",
+            "pulseOxymeter",
+            "windDirectionSensor"
+        ]
+        chosen_service = random.choice(available_services)
+        self.logger.info(f"Serviço escolhido aleatoriamente para requisição: {chosen_service}")
+
+        # 3. Recolhe a identidade do Gateway local
+        identity_info = self.invoke('soft-iot.id.manager')
+        my_gateway_id = identity_info.get('gateway_id')
+        my_group = identity_info.get('group', 'default_group')
+
+        if not my_gateway_id:
+            self.logger.error("Falha: ID do Gateway não configurado.")
+            return
+
+        # 4. Estrutura do payload da requisição (Equivalente à HasReputationService)
+        request_transaction = {
+            "source": my_gateway_id,
+            "group": my_group,
+            "type": "REP_SVC_REQ",
+            "requestedService": chosen_service
+        }
+
+        # 5. Publicação na Tangle utilizando o índice acordado para requisições
+        broadcast_index = 'REP_HAS_SVC'
+        
+        try:
+            res = self.invoke('soft-iot.dlt.client.api.write', {
+                "index": broadcast_index,
+                "data": request_transaction
+            })
+
+            if res and res.get('status') == 'success':
+                self.logger.info(f"Requisição do serviço {chosen_service} publicada no índice '{broadcast_index}'.")
+                
+                # Grava o ticket de espera
+                self._register_pending_request(chosen_service)
+                
+                # NOVA LINHA: Dispara o loop de contagem no Zato de forma assíncrona (não bloqueia esta task)
+                self.invoke_async('soft-iot.reputation.task.wait_nodes_responses', {})
+            else:
+                self.logger.warning(f"Falha na rede ao publicar requisição: {res}")
+                
+        except Exception as e:
+            self.logger.error(f"Erro crítico ao solicitar serviço: {e}")
+
+
