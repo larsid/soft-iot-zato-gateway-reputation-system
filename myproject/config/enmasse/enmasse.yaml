@@ -123,6 +123,10 @@ channel_rest:
     service: soft-iot.reputation.task.check_devices
     url_path: /soft-iot/reputation/task/check-devices
     data_format: json
+  - name: service_handler_check_nodes_services
+    service: soft-iot.reputation.task.check_nodes_services
+    url_path: /soft-iot/reputation/task/check-nodes-services
+    data_format: json
 
   # Serviço de debug temporário
   - name: service_handler_get_data_gateway
