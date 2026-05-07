@@ -64,9 +64,12 @@ class DLTWriterService(DLTClientBaseService):
                 
                 # Se a API retornou um JSON válido, entrega a resposta do Zato.
                 if response.text and response.text.strip():
-                    self.response.payload = {"status": "success"}
+                    try:
+                        self.response.payload = response.json()
+                    except ValueError:
+                        self.response.payload = {"message": "Reading error"}
                 else:
-                    self.response.payload = {"status": "error"}
+                    self.response.payload = {"message": "Error"}
 
             else:
                 self.logger.error(f"Erro na API Hornet ({response.status_code}): {response.text}")
