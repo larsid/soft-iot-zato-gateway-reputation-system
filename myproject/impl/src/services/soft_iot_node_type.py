@@ -163,6 +163,11 @@ class NodeEvaluationService(Service):
             "data": evaluation_transaction
         })
 
-        self.response.payload = {"status": "success", "conduct_applied": conduct, "tangle_response": res}
+
+        if res.get("status") == "success":
+            self.response.payload = {"status": "success", "conduct_applied": conduct, "tangle_response": res}
+        else:
+            self.response.payload = {"status": "error", "tangle_response": res}
+            
         return
     
