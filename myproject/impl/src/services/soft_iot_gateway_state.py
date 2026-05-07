@@ -44,14 +44,34 @@ class GatewayStateManager:
                     CREATE TABLE IF NOT EXISTS gateway_properties (
                         key TEXT PRIMARY KEY,
                         reputation TEXT,
-                        behavior_changed TEXT
+                        behavior_changed TEXT,
+                        started_experiment_time DATETIME
+
+                    )
+                ''')
+
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS requests (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        id_evaluator TEXT,
+                        id_provider TEXT,
+                        behavior TEXT,
+                        consistency REAL,
+                        reliability REAL,
+                        reputation_provider REAL,
+                        old_credibility_evaluator REAL,
+                        new_credibility_evaluator REAL,
+                        start_request_time DATETIME,
+                        finish_request_time DATETIME,
+                        reputation_evaluator REAL,
+                        status TEXT
                     )
                 ''')
                 
                 # Inicializa a linha única com a chave fixa
                 cursor.execute('''
-                    INSERT OR IGNORE INTO gateway_properties (key, reputation, behavior_changed)
-                    VALUES (?, '0.5', 'False')
+                    INSERT OR IGNORE INTO gateway_properties (key, reputation, behavior_changed, started_experiment_time)
+                    VALUES (?, '0.5', 'False', CURRENT_TIMESTAMP)
                 ''', (self._STATE_KEY,))
                 
                 conn.commit()
@@ -123,3 +143,182 @@ class GatewayStateManager:
         except Exception as e:
             self.logger.error(f"Erro ao ler behavior_changed: {e}")
             return False
+        
+    # ==========================================
+    # GESTÃO DE TEMPO DE EXPERIMENTO
+    # ==========================================
+
+    def get_started_experiment_time(self):
+        """Coleta a data e hora de início do experimento."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT started_experiment_time FROM gateway_properties WHERE key = ?', (self._STATE_KEY,))
+                row = cursor.fetchone()
+                
+                # Retorna a string do timestamp (ex: '2026-05-07 13:56:00')
+                return row[0] if row and row[0] is not None else None
+        except Exception as e:
+            self.logger.error(f"Erro ao ler started_experiment_time: {e}")
+            return None
+        
+
+    # ==========================================
+    # GESTÃO DE REQUISIÇÕES (AUDITORIA)
+    # ==========================================
+
+    def create_request(self, id_evaluator):
+        """
+        Cria um novo registro de requisição na tabela de auditoria.
+        Inicializa apenas o id_evaluator e o status.
+        Retorna o ID gerado pelo autoincremento.
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # O ID é omitido para que o SQLite use o AUTOINCREMENT
+                # O status é fixado como 'WAITING_RESPONSES' conforme o requisito
+                cursor.execute('''
+                    INSERT INTO requests (id_evaluator, status, start_request_time) 
+                    VALUES (?, 'WAITING_RESPONSES', CURRENT_TIMESTAMP)
+                ''', (id_evaluator,))
+                
+                # Recupera o ID da linha recém-criada
+                request_id = cursor.lastrowid
+                
+                conn.commit()
+                
+                self.logger.info(f"Nova requisição de auditoria criada. ID: {request_id}")
+                return request_id
+                
+        except Exception as e:
+            self.logger.error(f"Erro ao criar registro de requisição na tabela requests: {e}")
+            return None
+        
+    def get_last_request_status(self):
+        """
+        Consulta Heurística: Retorna o status da última requisição inserida na tabela.
+        Útil para saber o estado global mais recente do Gateway.
+        Retorna uma tupla (id, status) ou (None, None) se a tabela estiver vazia.
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                # Busca estritamente a última linha ordenada pelo autoincremento
+                cursor.execute('SELECT id, status FROM requests ORDER BY id DESC LIMIT 1')
+                row = cursor.fetchone()
+                
+                if row:
+                    return row[0], row[1]
+                return None, None
+                
+        except Exception as e:
+            self.logger.error(f"Erro ao buscar o status da última requisição: {e}")
+            return None, None
+        
+    def get_start_request_time(self, request_id):
+        """
+        Consulta Determinística: Retorna o timestamp de início de uma requisição específica.
+        Retorna a string do formato DATETIME (ex: '2026-05-07 14:30:00') ou None se falhar.
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Busca estritamente a coluna start_request_time baseada no ID único
+                cursor.execute('SELECT start_request_time FROM requests WHERE id = ?', (request_id,))
+                row = cursor.fetchone()
+                
+                # Verifica se a linha existe e se o valor não é nulo
+                if row and row[0] is not None:
+                    return row[0]
+                
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"Erro ao buscar o tempo de início para o ID {request_id}: {e}")
+            return None
+    
+    def update_request_status(self, request_id, new_status):
+        """
+        Atualiza estritamente a coluna de status de uma requisição específica.
+        Retorna True se a atualização for bem-sucedida e a linha existir, False caso contrário.
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Executa a atualização focada apenas na coluna status
+                cursor.execute('''
+                    UPDATE requests 
+                    SET status = ? 
+                    WHERE id = ?
+                ''', (new_status, request_id))
+                
+                conn.commit()
+                
+                # O rowcount verifica quantas linhas foram fisicamente alteradas no disco
+                if cursor.rowcount > 0:
+                    self.logger.info(f"Status da requisição {request_id} atualizado para '{new_status}'.")
+                    return True
+                else:
+                    self.logger.warning(f"Tentativa de atualizar status falhou: ID {request_id} não encontrado.")
+                    return False
+                    
+        except Exception as e:
+            self.logger.error(f"Erro ao atualizar status da requisição {request_id}: {e}")
+            return False
+        
+
+
+
+
+
+
+    
+    # ==========================================
+    # GESTÃO DE EXPORTAÇÃO COMPLETA (API)
+    # ==========================================
+
+    def get_all_properties(self):
+        """
+        Retorna todas as propriedades do gateway como um dicionário.
+        """
+
+        try:
+            with self._get_connection() as conn:
+                # Transforma o retorno padrão em Dicionário
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                
+                cursor.execute('SELECT * FROM gateway_properties WHERE key = ?', (self._STATE_KEY,))
+                row = cursor.fetchone()
+                
+                # Converte o objeto Row nativo para um dicionário padrão do Python
+                return dict(row) if row else {}
+                
+        except Exception as e:
+            self.logger.error(f"Erro ao ler todas as propriedades: {e}")
+            return {}
+
+    def get_all_requests(self):
+        """
+        Retorna todos os registos de requisições como uma lista de dicionários.
+        """
+
+        try:
+            with self._get_connection() as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                
+                # Coleta todo o histórico, ordenado cronologicamente pelo ID
+                cursor.execute('SELECT * FROM requests ORDER BY id ASC')
+                rows = cursor.fetchall()
+                
+                # Cria uma lista de dicionários com todos os dados
+                return [dict(row) for row in rows]
+                
+        except Exception as e:
+            self.logger.error(f"Erro ao ler todas as requisições: {e}")
+            return []
