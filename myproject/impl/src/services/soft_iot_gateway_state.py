@@ -2,6 +2,7 @@
 
 import sqlite3
 import logging
+import json
 
 class GatewayStateManager:
     """
@@ -65,6 +66,19 @@ class GatewayStateManager:
                         finish_request_time DATETIME,
                         reputation_evaluator REAL,
                         status TEXT
+                    )
+                ''')
+
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS responses (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        id_request INTEGER,
+                        source TEXT,
+                        ip_source TEXT,
+                        target TEXT,
+                        services TEXT, -- Armazenado como JSON String
+                        group_name TEXT,
+                        FOREIGN KEY (id_request) REFERENCES requests (id)
                     )
                 ''')
                 
@@ -269,10 +283,59 @@ class GatewayStateManager:
         except Exception as e:
             self.logger.error(f"Erro ao atualizar status da requisição {request_id}: {e}")
             return False
-        
 
 
+    # ==========================================
+    # GESTÃO DE RESPOSTAS
+    # ==========================================
 
+    def save_response(self, id_request, source, ip_source, target, services_list, group_name):
+        """
+        Salva uma resposta recebida de um nó provedor.
+        O campo services_list deve ser uma lista de tuplas/dicionários.
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Converte a lista de serviços para JSON para persistência
+                services_json = json.dumps(services_list)
+                
+                cursor.execute('''
+                    INSERT INTO responses (id_request, source, ip_source, target, services, group_name)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (id_request, source, ip_source, target, services_json, group_name))
+                
+                conn.commit()
+                return cursor.lastrowid
+        except Exception as e:
+            self.logger.error(f"Erro ao salvar resposta do nó {source}: {e}")
+            return None
+
+    def get_responses_for_request(self, id_request):
+        """
+        Retorna todas as respostas recebidas para um ID de requisição específico.
+        """
+        try:
+            with self._get_connection() as conn:
+                import sqlite3
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                
+                cursor.execute('SELECT * FROM responses WHERE id_request = ?', (id_request,))
+                rows = cursor.fetchall()
+                
+                results = []
+                for row in rows:
+                    item = dict(row)
+                    # Converte o JSON de volta para lista Python
+                    item['services'] = json.loads(item['services'])
+                    results.append(item)
+                    
+                return results
+        except Exception as e:
+            self.logger.error(f"Erro ao buscar respostas para o pedido {id_request}: {e}")
+            return []
 
 
 
