@@ -210,7 +210,7 @@ class CheckNodesServicesTask(Service):
                 self.logger.info(f"Requisição do serviço {chosen_service} publicada no índice '{broadcast_index}'.")
             
                 # Dispara o loop de contagem no Zato de forma assíncrona (não bloqueia esta task)
-                #self.invoke_async('soft-iot.reputation.task.wait_nodes_responses', {})
+                #self.invoke_async('soft-iot.reputation.task.wait_nodes_responses', {'request_id': request_id})
 
                 self.response.payload = {"status": "Request created"}
                 return 
@@ -465,7 +465,7 @@ class RequestNodeServiceTask(Service):
 
         consensus_rep = best_node.get('reputation', 0.5)
 
-        cred_res = self.invoke('soft-iot.reputation.devicescredibility.manager', {
+        cred_res = self.invoke('soft-iot.reputation.credibility.manager', {
             "evaluator_id": id_evaluator,
             "provider_id": node_id,
             "evaluation_given": final_evaluation_value,
@@ -479,6 +479,9 @@ class RequestNodeServiceTask(Service):
 
         # Publicação na Tangle. Ignora se for egoísta
         if conduct_applied != 'SELFISH':
+
+            final_evaluation_value_with_cred = final_service_evaluation * new_cred
+
             evaluation_transaction = {
                 "source": id_evaluator,
                 "group": group_evaluator,
@@ -486,7 +489,7 @@ class RequestNodeServiceTask(Service):
                 "target": node_id,
                 "serviceEvaluation": final_service_evaluation,
                 "nodeCredibility": float(new_cred),
-                "value": final_evaluation_value
+                "value": final_evaluation_value_with_cred
             }
             
             self.invoke('soft-iot.dlt.client.api.write', {

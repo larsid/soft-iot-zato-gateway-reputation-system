@@ -144,7 +144,7 @@ class CredibilityManager(Service):
                     if isinstance(tx_data, dict):
                         # Verifica se é do tipo certo e se o 'source' é o nosso avaliador
                         if tx_data.get('type') == 'REP_EVALUATION' and tx_data.get('source') == evaluator_id:
-                            last_evaluation_given = tx_data.get('value')
+                            last_evaluation_given = tx_data.get('serviceEvaluation')
                             break  # Encontrou a ocorrência mais recente, interrompe o loop
 
         # Tratamento da primeira avaliação
