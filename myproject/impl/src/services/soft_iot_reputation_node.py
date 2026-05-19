@@ -102,81 +102,95 @@ class CredibilityManager(Service):
     name = 'soft-iot.reputation.credibility.manager'
 
     def handle(self):
+
         # Coleta dos dados de entrada do payload
         payload = self.request.payload
         evaluator_id = payload.get('evaluator_id') # ID do nó avaliador
-        
-        # Parâmetros para o cálculo
-        current_cred = float(payload.get('current_credibility', 0.5))
-        evaluation_given = float(payload.get('evaluation_given', 0.0)) # Nota atual
-        consensus_reputation = float(payload.get('consensus_reputation', 0.0)) # Valor de consenso da rede
+        provider_id = payload.get('provider_id') # ID do nó provedor
+        evaluation_given = float(payload.get('evaluation_given')) # Nota atual
+        consensus_reputation = float(payload.get('consensus_reputation'))
 
-        # --- LÓGICA DE CONSISTÊNCIA (C(n)) ---
-        # Inicializa com o valor atual para caso não exista histórico (Consistência neutra = 1.0)
-        last_evaluation_given = evaluation_given 
-        eval_history = []
-        
-        self.logger.info(f"Buscando histórico na Tangle para o avaliador: {evaluator_id}")
-        
-        # Invoca o serviço de leitura da Tangle usando o ID do avaliador como índice
-        history = self.invoke('soft-iot.dlt.client.api.read_index', {'index': evaluator_id})
-        
-        # Tratamento robusto para evitar erros 'NoneType is not iterable'
-        if history and isinstance(history, list):
-            for tx in history:
-                if isinstance(tx, dict):
-                    data_content = tx.get('data', {})
-                    
-                    # Filtra apenas transações do tipo REP_EVALUATION
-                    if isinstance(data_content, dict) and data_content.get('type') == 'REP_EVALUATION':
-                        eval_history.append(data_content)
+        if not evaluator_id:
+            self.response.payload = {"status": "error", "message": "Evaluator ID missing"}
+            return
+
+
+        # Coleta da última credibilidade
+        tangle_res = self.invoke('soft-iot.dlt.client.api.read_index', {'index': f"CRED_{evaluator_id}"})
             
-            # Se houver histórico, extrai a nota da última avaliação realizada
-            if len(eval_history) > 0:
-                last_tx = eval_history[-1]
-                last_evaluation_given = float(last_tx.get('value', evaluation_given))
-                self.logger.info(f"Última avaliação encontrada para {evaluator_id}: {last_evaluation_given}")
+        # Validação de Defesa: Verifica se retornou dados válidos
+        if isinstance(tangle_res, list) and tangle_res:
 
-        # 1. Confiabilidade: Comparação entre a nota dada e o consenso da rede
+            data_block = tangle_res[0].get('data')
+            
+            if isinstance(data_block, dict):
+                # Tenta pegar a credibilidade, se não existir mantém 0.5
+                current_cred = data_block.get('credibility', 0.5)
+                self.logger.info(f"Credibilidade recuperada para {evaluator_id}: {current_cred}")
+
+
+        # Coleta da última avaliação
+        last_evaluation_given = None
+
+        if provider_id:
+            # Busca todo o histórico de avaliações que o provedor já recebeu
+            provider_history = self.invoke('soft-iot.dlt.client.api.read_index', {'index': provider_id})
+            
+            # Percorre a lista do mais recente para o mais antigo
+            if isinstance(provider_history, list):
+                for tx in provider_history:
+                    tx_data = tx.get('data')
+                    
+                    if isinstance(tx_data, dict):
+                        # Verifica se é do tipo certo e se o 'source' é o nosso avaliador
+                        if tx_data.get('type') == 'REP_EVALUATION' and tx_data.get('source') == evaluator_id:
+                            last_evaluation_given = tx_data.get('value')
+                            break  # Encontrou a ocorrência mais recente, interrompe o loop
+
+        # Tratamento da primeira avaliação
+        if last_evaluation_given is None:
+            self.logger.info(f"Primeira vez que {evaluator_id} avalia {provider_id}. Consistência considerada máxima.")
+            last_evaluation_given = evaluation_given
+        else:
+            last_evaluation_given = float(last_evaluation_given)
+        
+
+        # Confiabilidade: Comparação entre a nota dada e o consenso da rede
         reliability = 1.0 - abs(consensus_reputation - evaluation_given)
         
-        # 2. Consistência: Comparação entre a nota atual e a conduta anterior do mesmo nó
+        # Consistência: Comparação entre a nota atual e a conduta anterior do mesmo nó
         consistency = 1.0 - abs(evaluation_given - last_evaluation_given)
 
-        # 3. Limiares de decisão (Thresholds) via variáveis de ambiente (Paridade com .cfg)
-        env_rel_threshold = os.environ.get('Zato_RELIABILITY_THRESHOLD', '0.75')
-        env_con_threshold = os.environ.get('Zato_CONSISTENCY_THRESHOLD', '0.75')
-        
-        RELIABILITY_THRESHOLD = float(env_rel_threshold)
-        CONSISTENCY_THRESHOLD = float(env_con_threshold)
+        # Limiares de decisão via variáveis de ambiente 
+        RELIABILITY_THRESHOLD = float(os.environ.get('Zato_RELIABILITY_THRESHOLD', '0.75'))
+        CONSISTENCY_THRESHOLD = float(os.environ.get('Zato_CONSISTENCY_THRESHOLD', '0.75'))
 
         new_cred = current_cred
 
-        # 4. Lógica de Bonificação e Penalidade (Fiel ao NodeCredibility.java)
-        if reliability >= RELIABILITY_THRESHOLD and consistency >= CONSISTENCY_THRESHOLD:
-            # Caso ideal: Confiável e Consistente
-            new_cred = new_cred + 0.10
-        elif reliability >= RELIABILITY_THRESHOLD:
-            # Confiável mas mudou o padrão de comportamento
-            new_cred = new_cred + 0.05
-        elif reliability < RELIABILITY_THRESHOLD and consistency >= CONSISTENCY_THRESHOLD:
-            # Consistente no erro (Provável ataque direcionado ou persistente)
-            new_cred = new_cred - 0.10
+        # Cenário ideal
+        if reliability <= RELIABILITY_THRESHOLD and consistency <= CONSISTENCY_THRESHOLD:
+            new_cred = new_cred + (new_cred * 0.1)
+        # Apenas consenso com a avaliação da rede
+        elif reliability <= RELIABILITY_THRESHOLD:
+            new_cred = new_cred + (new_cred * 0.05)
+        # Apenas consenso com a avaliação anterior do próprio nó
+        elif consistency <= CONSISTENCY_THRESHOLD:
+            new_cred = new_cred - (new_cred * 0.05)
+        # As duas métricas são maiores que o limite
         else:
-            # Falha em ambos os critérios
-            new_cred = new_cred - 0.05
+            new_cred = new_cred - (new_cred * 0.1)
 
-        # Garante que a credibilidade permaneça no intervalo [-1.0, 1.0]
         if new_cred > 1.0:
             new_cred = 1.0
         elif new_cred < -1.0:
             new_cred = -1.0
 
+
         # Resposta final do serviço
         self.response.payload = {
-            "evaluator_id": evaluator_id,
+            "old_credibility": round(current_cred, 4),
             "new_credibility": round(new_cred, 4),
             "reliability": round(reliability, 4),
-            "consistency": round(consistency, 4),
-            "history_count": len(eval_history)
+            "consistency": round(consistency, 4)
         }
+
