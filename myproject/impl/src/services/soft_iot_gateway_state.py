@@ -283,6 +283,78 @@ class GatewayStateManager:
         except Exception as e:
             self.logger.error(f"Erro ao atualizar status da requisição {request_id}: {e}")
             return False
+        
+    def get_request_status(self, request_id):
+        """
+        Consulta Determinística: Retorna o status de uma requisição específica.
+        Obrigatório se a decisão lógica da Task depender do fim de um ciclo exato.
+        Retorna apenas a string do status.
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT status FROM requests WHERE id = ?', (request_id,))
+                row = cursor.fetchone()
+                
+                if row:
+                    return row[0]
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"Erro ao buscar o status para o ID {request_id}: {e}")
+            return None
+        
+    def finalize_request(self, request_id, final_status):
+        """
+        Encerra o ciclo de uma requisição, gravando o status final 
+        e o timestamp exato da conclusão.
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Atualiza o status e usa o relógio do SQLite (UTC) para o tempo de término
+                cursor.execute('''
+                    UPDATE requests 
+                    SET status = ?, finish_request_time = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                ''', (final_status, request_id))
+                
+                conn.commit()
+                
+                if cursor.rowcount > 0:
+                    self.logger.info(f"Requisição {request_id} finalizada com status '{final_status}'.")
+                    return True
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Erro ao finalizar a requisição {request_id}: {e}")
+            return False
+
+
+    def update_request_evaluation_data(self, request_id, provider_id, behavior, consistency, reliability, 
+                                       reputation_provider, old_cred, new_cred, reputation_evaluator):
+        """
+        Atualiza a linha de requisição na tabela 'requests' com as métricas geradas 
+        após o consumo e avaliação do serviço.
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE requests 
+                    SET behavior = ?, consistency = ?, reliability = ?, 
+                        reputation_provider = ?, old_credibility_evaluator = ?, 
+                        new_credibility_evaluator = ?, reputation_evaluator = ?, id_provider = ?
+                    WHERE id = ?
+                ''', (behavior, consistency, reliability, reputation_provider, 
+                      old_cred, new_cred, reputation_evaluator, provider_id, request_id))
+                conn.commit()
+                
+                if cursor.rowcount > 0:
+                    self.logger.info(f"Dados de avaliação gravados com sucesso para a requisição {request_id}.")
+        except Exception as e:
+            self.logger.error(f"Erro ao atualizar dados de avaliação do request {request_id}: {e}")
 
 
     # ==========================================
@@ -384,4 +456,39 @@ class GatewayStateManager:
                 
         except Exception as e:
             self.logger.error(f"Erro ao ler todas as requisições: {e}")
+            return []
+        
+    def get_all_responses(self):
+        """
+        Retorna todos os registos de respostas como uma lista de dicionários.
+        Faz o parse automático da string JSON da coluna 'services'.
+        """
+        try:
+            with self._get_connection() as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                
+                # Coleta todo o histórico de respostas
+                cursor.execute('SELECT * FROM responses ORDER BY id ASC')
+                rows = cursor.fetchall()
+                
+                responses_list = []
+                for row in rows:
+                    row_dict = dict(row)
+                    
+                    # Desserializa a JSON String para recuperar a estrutura de dados original
+                    services_str = row_dict.get('services')
+                    if services_str:
+                        try:
+                            row_dict['services'] = json.loads(services_str)
+                        except json.JSONDecodeError:
+                            # Mantém como string caso haja uma anomalia na gravação
+                            pass 
+                            
+                    responses_list.append(row_dict)
+                    
+                return responses_list
+                
+        except Exception as e:
+            self.logger.error(f"Erro ao ler todas as respostas: {e}")
             return []
