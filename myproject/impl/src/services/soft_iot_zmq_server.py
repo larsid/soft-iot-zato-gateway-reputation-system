@@ -5,7 +5,9 @@ import json
 import os
 import logging
 
-# A MÁGICA ESTÁ AQUI: importando a versão compatível com Gevent do Zato
+from soft_iot_id_manager import IDManager
+from soft_iot_gateway_state import GatewayStateManager
+
 import zmq.green as zmq
 
 from zato.server.service import Service
@@ -106,11 +108,50 @@ class ZMQManager:
                 logger.error(f"Erro ao notificar serviço: {e}")
 
 
-class ZMQStartupService(Service):
+class ServiceResponseSubscriber:
     """
-    Serviço responsável por ativar o Singleton do ZMQ Manager.
+    Ouvinte dedicado a interceptar respostas de requisições de serviço (REP_SVC_RES).
     """
 
+    def update(self, topic, payload):
+
+        if topic == "REP_HAS_SVC":
+            msg_type = payload.get('type')
+            
+            # Lógica para receber respostas da requisição feita
+            if msg_type == 'REP_SVC_RES':
+                self._process_response(payload)
+
+    def _process_response(self, payload):
+
+        id_manager = IDManager()
+        target = payload.get('target')
+
+        # Verifica se o gateway atual é o alvo
+        if target != id_manager.id:
+            return
+
+        # Extração dos dados
+        id_request = payload.get('id_request') 
+        source = payload.get('source')
+        ip_source = payload.get('ip_source')
+        services = payload.get('services')
+        group_name = payload.get('group')
+
+        gs_manager = GatewayStateManager()
+        
+        # Filtro 4: Verifica o status da máquina de estados
+        current_status = gs_manager.get_request_status(id_request)
+
+        if current_status == 'WAITING_RESPONSES':
+            logger.info(f"Recebida proposta válida do provedor {source} (IP: {ip_source}).")
+            gs_manager.save_response(id_request, source, ip_source, target, services, group_name)
+
+
+class ZMQStartupService(Service):
+    """
+    Serviço responsável por ativar o Singleton do ZMQ Manager e plugar os ouvintes.
+    """
     name = 'soft-iot.zmq.start'
 
     def handle(self):
@@ -119,10 +160,15 @@ class ZMQStartupService(Service):
         self.logger.info(f"ZMQ Manager status atual: {'operando' if manager.is_running else 'parado'}")
         
         if not manager.is_running:
-            # Chama o start() direto, pois ele já se encarrega de criar a sua própria Thread
+
+            if not any(isinstance(sub, ServiceResponseSubscriber) for sub in manager.subscribers):
+                subscriber = ServiceResponseSubscriber()
+                manager.subscribers.append(subscriber)
+                self.logger.info("ServiceResponseSubscriber registrado com sucesso.")
+
             manager.start()
             self.logger.info("Comando de startup ZMQ enviado.")
         else:
-            self.logger.info("ZMQ Manager ja esta operando.")
+            self.logger.info("ZMQ Manager já está operando.")
 
-        self.response.payload = {"status": "ok", "message": "Startup iniciado"}
+        self.response.payload = {"status": "success", "message": "Startup concluído"}
