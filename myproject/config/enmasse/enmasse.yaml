@@ -119,27 +119,39 @@ channel_rest:
     service: soft-iot.reputation.task.change_disturbing_behavior
     url_path: /soft-iot/reputation/task/change-disturbing-behavior
     data_format: json
-  - name: service_handler_check_devices
-    service: soft-iot.reputation.task.check_devices
-    url_path: /soft-iot/reputation/task/check-devices
-    data_format: json
   - name: service_handler_check_nodes_services
     service: soft-iot.reputation.task.check_nodes_services
     url_path: /soft-iot/reputation/task/check-nodes-services
     data_format: json
+  - name: service_handler_wait_nodes_responses
+    service: soft-iot.reputation.task.wait_nodes_responses
+    url_path: /soft-iot/reputation/task/wait-nodes-resposes
+    data_format: json
+  - name: service_handler_select_best_node
+    service: soft-iot.reputation.task.select_best_node
+    url_path: /soft-iot/reputation/task/select-best-node
+    data_format: json
+  - name: service_handler_request_node_service
+    service: soft-iot.reputation.task.request_node_service
+    url_path: /soft-iot/reputation/task/request-node-service
+    data_format: json
 
   # Serviço de debug temporário
   - name: service_handler_get_data_gateway
-    service: soft-iot.reputation.state.get_all
+    service: soft-iot.gateway.state.get
     url_path: /soft-iot/reputation/task/get-data
     data_format: json
 
 
   # Teste
-  # - name: test
-  #   service: soft-iot.test.credibility
-  #   url_path: /soft-iot/test
-  #   data_format: json
+  - name: test_chamada
+    service: soft-iot.test.async_worker
+    url_path: /soft-iot/test-worker
+    data_format: json
+  - name: test
+    service: soft-iot.test.async_caller
+    url_path: /soft-iot/test-caller
+    data_format: json
 
   
 
