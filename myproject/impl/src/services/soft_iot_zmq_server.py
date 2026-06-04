@@ -9,10 +9,13 @@ from soft_iot_id_manager import IDManager
 from soft_iot_gateway_state import GatewayStateManager
 
 import zmq.green as zmq
+import requests
 
 from zato.server.service import Service
 
 logger = logging.getLogger('zato.zmq') 
+
+CONFIG_FILE_PATH = '/home/ubuntu/mapping_archives/devices_config/devices.json'
 
 class ZMQManager:
     """
@@ -132,9 +135,9 @@ class ServiceResponseSubscriber:
             return
 
         # Extração dos dados
-        id_request = payload.get('id_request') 
+        id_request = payload.get('idRequest') 
         source = payload.get('source')
-        ip_source = payload.get('ip_source')
+        ip_source = payload.get('ipSource')
         services = payload.get('services')
         group_name = payload.get('group')
 
@@ -146,6 +149,103 @@ class ServiceResponseSubscriber:
         if current_status == 'WAITING_RESPONSES':
             logger.info(f"Recebida proposta válida do provedor {source} (IP: {ip_source}).")
             gs_manager.save_response(id_request, source, ip_source, target, services, group_name)
+
+
+class ServiceRequestSubscriber:
+    """
+    Ouvinte dedicado a interceptar requisições (REP_SVC_REQ) provenientes do barramento.
+    """
+
+    def update(self, topic, payload):
+        if topic == "REP_HAS_SVC":
+            msg_type = payload.get('type')
+            
+            if msg_type == 'REP_SVC_REQ':
+                self._process_request(payload)
+
+    def _load_devices_from_file(self):
+        """ 
+        Lê e parseia o arquivo JSON de dispositivos.
+        Replicação exata da lógica do BaseMappingService.
+        """
+        try:
+            if not os.path.exists(CONFIG_FILE_PATH):
+                logger.warning(f"Arquivo de dispositivos não encontrado em: {CONFIG_FILE_PATH}")
+                return []
+
+            with open(CONFIG_FILE_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data
+        except Exception as e:
+            logger.error(f"Erro ao ler devices.json no ZMQ: {e}")
+            return []
+
+    def _process_request(self, payload):
+        requested_service = payload.get('requestedService')
+        requester_id = payload.get('source')
+        id_request = payload.get('idRequest')
+
+        if not requested_service or not requester_id:
+            logger.warning("Requisição recebida com parâmetros nulos.")
+            return
+
+        logger.info(f"Processando requisição de serviço '{requested_service}' do nó {requester_id} no ZMQ.")
+
+        devices = self._load_devices_from_file()
+
+        # Buscando sensores com serviço requisitado
+        matched_services = []
+
+        for device in devices:
+            device_id = device.get('id')
+            sensors = device.get('sensors', [])
+            
+            for sensor in sensors:
+                if sensor.get('type') == requested_service:
+                    matched_services.append({
+                        "device_id": device_id,
+                        "sensor_id": sensor.get('id')
+                    })
+        
+        if matched_services:
+            logger.info(f"Encontrados {len(matched_services)} sensores compatíveis. Preparando REP_SVC_RES.")
+            
+            id_manager = IDManager()
+            my_gateway_id = id_manager.id
+            my_group = id_manager.group
+            my_ip = id_manager.ip
+
+            response_tx = {
+                "type": "REP_SVC_RES",
+                "target": requester_id,
+                "idRequest": id_request,
+                "source": my_gateway_id,
+                "ipSource": my_ip,
+                "group": my_group,
+                "services": matched_services
+            }
+
+            # Comunicação local via HTTP (Loopback) para acionar a escrita na DLT
+            try:
+
+                url_dlt = 'http://127.0.0.1:11223/soft-iot/dlt/transactions' 
+                dlt_payload = {
+                    "index": "REP_HAS_SVC",
+                    "data": response_tx
+                }
+                
+                dlt_response = requests.post(url_dlt, json=dlt_payload, timeout=10)
+                
+                if dlt_response.status_code == 200:
+                    logger.info(f"Oferta de serviço publicada na Tangle com sucesso para o nó {requester_id}.")
+                else:
+                    logger.error(f"Falha na API local de DLT. Status: {dlt_response.status_code}")
+                    
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Erro de rede ao acionar a API local de DLT: {e}")
+                
+        else:
+            logger.info(f"O nó local não possui o serviço '{requested_service}'. Ignorando.")
 
 
 class ZMQStartupService(Service):
