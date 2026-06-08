@@ -210,7 +210,7 @@ class CheckNodesServicesTask(Service):
                 self.logger.info(f"Requisição do serviço {chosen_service} publicada no índice '{broadcast_index}'.")
             
                 # Dispara o loop de contagem no Zato de forma assíncrona (não bloqueia esta task)
-                #self.invoke_async('soft-iot.reputation.task.wait_nodes_responses', {'request_id': request_id})
+                self.invoke_async('soft-iot.reputation.task.wait_nodes_responses', {'request_id': request_id}, None)
 
                 self.response.payload = {"status": "Request created"}
                 return 
@@ -263,7 +263,7 @@ class WaitNodesResponsesTask(Service):
             # 4. Muda o status
             gs_manager.update_request_status(request_id, 'CHOSING_BETTER_NODE')
             
-            #self.invoke_async('soft-iot.reputation.task.select_best_node', {"request_id": request_id})
+            self.invoke_async('soft-iot.reputation.task.select_best_node', {"request_id": request_id}, None)
             
         else:
             self.logger.warning(
@@ -307,6 +307,8 @@ class SelectBestNodeTask(Service):
                 "services": services
             }
 
+        self.logger.info(f"QUEM RESPONDEU: {node_metadata}...")
+
         candidates_ranking = []
 
         # Calcula a reputação para cada nó único
@@ -332,6 +334,8 @@ class SelectBestNodeTask(Service):
             except Exception as e:
                 self.logger.error(f"Erro ao processar candidato {node_id}: {e}")
 
+        self.logger.info(f"RANKING: {node_metadata}...")
+
         # Ordenação: Maior reputação primeiro
         candidates_ranking.sort(key=lambda x: x['reputation'], reverse=True)
 
@@ -350,7 +354,7 @@ class SelectBestNodeTask(Service):
 
         gs_manager.update_request_status(request_id, 'REQUESTING_SERVICE')
 
-        #self.invoke_async('soft-iot.reputation.task.request_node_service', {"request_id": request_id, "best_node": best_node})
+        self.invoke_async('soft-iot.reputation.task.request_node_service', {"request_id": request_id, "best_node": best_node}, None)
 
         self.response.payload = {
             "request_id": request_id,
@@ -498,7 +502,7 @@ class RequestNodeServiceTask(Service):
             })
             self.logger.info(f"Avaliação publicada na Tangle para o provedor {node_id}.")
         
-        reputation_res = self.invoke('soft-iot.node.evaluation')
+        my_current_reputation = gs_manager.get_reputation()
 
         gs_manager.update_request_evaluation_data(
             request_id=request_id,
@@ -508,7 +512,7 @@ class RequestNodeServiceTask(Service):
             reputation_provider=consensus_rep,
             old_cred=old_cred,
             new_cred=new_cred,
-            reputation_evaluator=reputation_res.get("my_current_reputation") 
+            reputation_evaluator=my_current_reputation
         )
 
         gs_manager.finalize_request(request_id, status)
@@ -519,24 +523,3 @@ class RequestNodeServiceTask(Service):
             "collected_data_count": len(collected_data),
             "partial_errors": has_error
         }
-
-
-
-        # # 4. Avalia o resultado da coleta e encerra o ciclo
-        # if collected_data:
-
-        #     # FAZER LÓGICA DE AVALIAÇÃO DO NÓ E INSERÇÃO DOS DADOS DA REQUISIÇÃO NO BANCO   
-
-        #     gs_manager.finalize_request(request_id, 'FINISHED')
-            
-        # else:
-        #     # Se o nó falhou em entregar os dados (caiu ou deu erro HTTP), falhamos o request
-        #     # Na avaliação subsequente, este nó deve receber uma punição severa na reputação.
-        #     gs_manager.finalize_request(request_id, 'FAILED_DATA_CONSUMPTION')
-
-        # self.response.payload = {
-        #     "request_id": request_id,
-        #     "status": "success" if collected_data else "error",
-        #     "collected_data_count": len(collected_data),
-        #     "partial_errors": has_error
-        # }
