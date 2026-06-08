@@ -85,6 +85,12 @@ class ReputationOrchestrator(Service):
 
         # Garante o limite estrito do intervalo [-1.0, 1.0]
         final_reputation = max(-1.0, min(1.0, final_reputation))
+
+        self.logger.info(
+            f"[RESULTADO ORCHESTRATOR] Nó: {target_node_id} | "
+            f"Reputação Final: {final_reputation:.4f} | "
+            f"Avaliações Confiáveis Utilizadas: {len(trusted_evaluations)} de {len(valid_evaluations)}"
+        )
         
         self.response.payload = {
             "node_id": target_node_id,
@@ -114,6 +120,8 @@ class CredibilityManager(Service):
             self.response.payload = {"status": "error", "message": "Evaluator ID missing"}
             return
 
+        # Valor default
+        current_cred = 0.5
 
         # Coleta da última credibilidade
         tangle_res = self.invoke('soft-iot.dlt.client.api.read_index', {'index': f"CRED_{evaluator_id}"})
@@ -167,14 +175,17 @@ class CredibilityManager(Service):
 
         new_cred = current_cred
 
+        is_reliable = reliability >= RELIABILITY_THRESHOLD
+        is_consistent = consistency >= CONSISTENCY_THRESHOLD
+
         # Cenário ideal
-        if reliability <= RELIABILITY_THRESHOLD and consistency <= CONSISTENCY_THRESHOLD:
+        if is_reliable and is_consistent:
             new_cred = new_cred + (new_cred * 0.1)
         # Apenas consenso com a avaliação da rede
-        elif reliability <= RELIABILITY_THRESHOLD:
+        elif is_reliable:
             new_cred = new_cred + (new_cred * 0.05)
         # Apenas consenso com a avaliação anterior do próprio nó
-        elif consistency <= CONSISTENCY_THRESHOLD:
+        elif is_consistent:
             new_cred = new_cred - (new_cred * 0.05)
         # As duas métricas são maiores que o limite
         else:
