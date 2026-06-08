@@ -85,6 +85,14 @@ channel_rest:
     service: soft-iot.zmq.start
     url_path: /soft-iot/dlt/zmq/start
     data_format: json
+  - name: zmq_handler_response
+    service: soft-iot.zmq.handler.response
+    url_path: /soft-iot/dlt/zmq/handler-response
+    data_format: json
+  - name: zmq_handler_request
+    service: soft-iot.zmq.handler.request
+    url_path: /soft-iot/dlt/zmq/handler-request
+    data_format: json
 
   # K-Means
   - name: kmeans_credibility_service
@@ -149,7 +157,7 @@ channel_rest:
     url_path: /soft-iot/test-worker
     data_format: json
   - name: test
-    service: soft-iot.test.async_caller
+    service: soft-iot.test.invoke.dlt.write
     url_path: /soft-iot/test-caller
     data_format: json
 
