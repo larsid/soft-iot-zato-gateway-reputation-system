@@ -9,7 +9,6 @@ from soft_iot_id_manager import IDManager
 from soft_iot_gateway_state import GatewayStateManager
 
 import zmq.green as zmq
-import requests
 
 from zato.server.service import Service
 
@@ -20,6 +19,7 @@ CONFIG_FILE_PATH = '/home/ubuntu/mapping_archives/devices_config/devices.json'
 class ZMQManager:
     """
     Controlador Singleton para gerenciar a conexão ZMQ de forma compatível com Zato.
+    Atua como um Dispatcher rápido: Lê da rede e despacha para os serviços em background.
     """
 
     _instance = None
@@ -34,7 +34,7 @@ class ZMQManager:
                     cls._instance.is_running = False
                     cls._instance.context = zmq.Context()
                     cls._instance.socket = None
-                    cls._instance.subscribers = [] 
+                    cls._instance.server = None 
 
         return cls._instance 
 
@@ -72,13 +72,14 @@ class ZMQManager:
 
             while self.is_running:
                 logger.info(f"Iniciando leitura (Modo Green/Assíncrono)")
-                
-                # Agora esta função vai esperar a mensagem, mas sem travar o resto do Zato
+
                 frames = self.socket.recv_multipart()
 
                 for frame in frames:
                     raw_content = frame.decode('utf-8')
                     parts = raw_content.split(' ', 1)
+
+                    logger.info(f"[ZMQ RAW DUMP] Tráfego intercetado: {raw_content}")
 
                     if len(parts) < 2:
                         continue
@@ -91,10 +92,16 @@ class ZMQManager:
                         inner_data_str = full_payload.get('payload', {}).get('data', '{}')
                         app_data = json.loads(inner_data_str)
 
-                        logger.info(f"Processando {topic_str} de: {app_data.get('source', 'desconhecido')}")
-                        logger.info(f"Dados: {app_data}")
+                        msg_type = app_data.get('type')
 
-                        self._notify_subscribers(topic_str, app_data)
+                        logger.info("MENSAGEM ENCONTRADA")
+
+                        if topic_str == "REP_HAS_SVC":
+                            logger.info("MENSAGEM VÁLIDA ENCONTRADA")
+                            if msg_type == 'REP_SVC_RES' and self.server:
+                                self.server.invoke_async('soft-iot.zmq.handler.response', app_data, None)
+                            elif msg_type == 'REP_SVC_REQ' and self.server:
+                                self.server.invoke_async('soft-iot.zmq.handler.request', app_data, None)
                     
                     except json.JSONDecodeError:
                         logger.error(f"Erro ao decodificar JSON do tópico {topic_str}")
@@ -103,36 +110,26 @@ class ZMQManager:
             logger.error(f"Erro crítico no loop ZMQ: {e}")
             self.is_running = False
 
-    def _notify_subscribers(self, topic, payload):
-        for sub in self.subscribers:
-            try:
-                sub.update(topic, payload)
-            except Exception as e:
-                logger.error(f"Erro ao notificar serviço: {e}")
 
-
-class ServiceResponseSubscriber:
+class ZMQResponseHandlerService(Service):
     """
-    Ouvinte dedicado a interceptar respostas de requisições de serviço (REP_SVC_RES).
+    Serviço Zato dedicado a interceptar respostas de requisições de serviço (REP_SVC_RES).
+    Rodará numa Thread segura gerida pelo Zato.
     """
+    name = 'soft-iot.zmq.handler.response'
 
-    def update(self, topic, payload):
-
-        if topic == "REP_HAS_SVC":
-            msg_type = payload.get('type')
-            
-            # Lógica para receber respostas da requisição feita
-            if msg_type == 'REP_SVC_RES':
-                self._process_response(payload)
-
-    def _process_response(self, payload):
+    def handle(self):
+        payload = self.request.payload
 
         id_manager = IDManager()
         target = payload.get('target')
 
         # Verifica se o gateway atual é o alvo
         if target != id_manager.id:
+            logger.info("NÃO É O ALVO")
             return
+        
+        logger.info("GRAVANDO")
 
         # Extração dos dados
         id_request = payload.get('idRequest') 
@@ -143,7 +140,7 @@ class ServiceResponseSubscriber:
 
         gs_manager = GatewayStateManager()
         
-        # Filtro 4: Verifica o status da máquina de estados
+        # Filtro: Verifica o status da máquina de estados
         current_status = gs_manager.get_request_status(id_request)
 
         if current_status == 'WAITING_RESPONSES':
@@ -151,23 +148,13 @@ class ServiceResponseSubscriber:
             gs_manager.save_response(id_request, source, ip_source, target, services, group_name)
 
 
-class ServiceRequestSubscriber:
+class ZMQRequestHandlerService(Service):
     """
-    Ouvinte dedicado a interceptar requisições (REP_SVC_REQ) provenientes do barramento.
+    Serviço Zato dedicado a interceptar requisições (REP_SVC_REQ).
     """
-
-    def update(self, topic, payload):
-        if topic == "REP_HAS_SVC":
-            msg_type = payload.get('type')
-            
-            if msg_type == 'REP_SVC_REQ':
-                self._process_request(payload)
+    name = 'soft-iot.zmq.handler.request'
 
     def _load_devices_from_file(self):
-        """ 
-        Lê e parseia o arquivo JSON de dispositivos.
-        Replicação exata da lógica do BaseMappingService.
-        """
         try:
             if not os.path.exists(CONFIG_FILE_PATH):
                 logger.warning(f"Arquivo de dispositivos não encontrado em: {CONFIG_FILE_PATH}")
@@ -177,10 +164,12 @@ class ServiceRequestSubscriber:
                 data = json.load(f)
                 return data
         except Exception as e:
-            logger.error(f"Erro ao ler devices.json no ZMQ: {e}")
+            logger.error(f"Erro ao ler devices.json: {e}")
             return []
 
-    def _process_request(self, payload):
+    def handle(self):
+        payload = self.request.payload
+        
         requested_service = payload.get('requestedService')
         requester_id = payload.get('source')
         id_request = payload.get('idRequest')
@@ -188,8 +177,14 @@ class ServiceRequestSubscriber:
         if not requested_service or not requester_id:
             logger.warning("Requisição recebida com parâmetros nulos.")
             return
+        
+        id_manager = IDManager()
+        
+        if requester_id == id_manager.id:
+            logger.info("ELE MESMO MANDOU")
+            return
 
-        logger.info(f"Processando requisição de serviço '{requested_service}' do nó {requester_id} no ZMQ.")
+        logger.info(f"Processando requisição de serviço '{requested_service}' do nó {requester_id}.")
 
         devices = self._load_devices_from_file()
 
@@ -225,24 +220,19 @@ class ServiceRequestSubscriber:
                 "services": matched_services
             }
 
-            # Comunicação local via HTTP (Loopback) para acionar a escrita na DLT
+            # Comunicação nativa via memória (Zero HTTP Overhead)
             try:
-
-                url_dlt = 'http://127.0.0.1:11223/soft-iot/dlt/transactions' 
                 dlt_payload = {
                     "index": "REP_HAS_SVC",
                     "data": response_tx
                 }
                 
-                dlt_response = requests.post(url_dlt, json=dlt_payload, timeout=10)
-                
-                if dlt_response.status_code == 200:
-                    logger.info(f"Oferta de serviço publicada na Tangle com sucesso para o nó {requester_id}.")
-                else:
-                    logger.error(f"Falha na API local de DLT. Status: {dlt_response.status_code}")
+                # Despacha o envio para a Tangle de forma assíncrona
+                self.invoke_async('soft-iot.dlt.client.api.write', dlt_payload)
+                logger.info(f"Oferta de serviço encaminhada para gravação na Tangle (Nó {requester_id}).")
                     
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Erro de rede ao acionar a API local de DLT: {e}")
+            except Exception as e:
+                logger.error(f"Erro interno ao acionar a API local de DLT: {e}")
                 
         else:
             logger.info(f"O nó local não possui o serviço '{requested_service}'. Ignorando.")
@@ -250,25 +240,22 @@ class ServiceRequestSubscriber:
 
 class ZMQStartupService(Service):
     """
-    Serviço responsável por ativar o Singleton do ZMQ Manager e plugar os ouvintes.
+    Serviço responsável por ativar o Singleton do ZMQ Manager.
     """
     name = 'soft-iot.zmq.start'
 
     def handle(self):
-        self.logger.info("Recebida requisição para iniciar ZMQ Manager.")
+        logger.info("Recebida requisição para iniciar ZMQ Manager.")
         manager = ZMQManager()
-        self.logger.info(f"ZMQ Manager status atual: {'operando' if manager.is_running else 'parado'}")
+        
+        manager.server = self.server 
+        
+        logger.info(f"ZMQ Manager status atual: {'operando' if manager.is_running else 'parado'}")
         
         if not manager.is_running:
-
-            if not any(isinstance(sub, ServiceResponseSubscriber) for sub in manager.subscribers):
-                subscriber = ServiceResponseSubscriber()
-                manager.subscribers.append(subscriber)
-                self.logger.info("ServiceResponseSubscriber registrado com sucesso.")
-
             manager.start()
-            self.logger.info("Comando de startup ZMQ enviado.")
+            logger.info("Comando de startup ZMQ enviado com sucesso.")
         else:
-            self.logger.info("ZMQ Manager já está operando.")
+            logger.info("ZMQ Manager já está operando.")
 
         self.response.payload = {"status": "success", "message": "Startup concluído"}
