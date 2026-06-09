@@ -166,10 +166,10 @@ class CheckNodesServicesTask(Service):
         
         # Lista fixa de serviços e cálculo de escolha aleatória
         available_services = [
-            "temperatureSensor",
-            "humiditySensor",
-            "pulseOxymeter",
-            "windDirectionSensor"
+            "Thermometer",
+            "HumiditySensor",
+            "PulseOxymeter",
+            "WindDirectionSensor"
         ]
 
         chosen_service = random.choice(available_services)
