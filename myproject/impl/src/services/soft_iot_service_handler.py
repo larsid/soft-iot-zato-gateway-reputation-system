@@ -400,11 +400,17 @@ class RequestNodeServiceTask(Service):
             device_id = service.get('device_id')
             sensor_id = service.get('sensor_id')
             
-            url = f"http://{ip_target}:11223/soft-iot/devices/{device_id}/sensors/{sensor_id}/data/latest"
+            url = f"http://{ip_target}:11223/soft-iot/devices/sensors/data/latest"
+
+            request_payload = {
+                "device_id": device_id,
+                "sensor_id": sensor_id
+            }
             
             try:
-                self.logger.info(f"Requisitando dados: {url}")
-                response = requests.get(url, timeout=10)
+                self.logger.info(f"Requisitando dados: {url} | Payload: {request_payload}")
+                
+                response = requests.get(url, json=request_payload, timeout=10)
                 
                 if response.status_code == 200:
                     # Converte a string JSON para Dicionário Python
@@ -451,6 +457,8 @@ class RequestNodeServiceTask(Service):
             raw_service_evaluation = 0
             raw_evaluation_value = 0.0
             status = 'FAILED_DATA_CONSUMPTION'
+
+        self.logger.info(f"O status será: {status}.")
 
 
         self.logger.info(f"Nota bruta gerada: {raw_evaluation_value}")
@@ -502,10 +510,15 @@ class RequestNodeServiceTask(Service):
             })
             self.logger.info(f"Avaliação publicada na Tangle para o provedor {node_id}.")
         
+        self.logger.info(f"Coletando reputação.")
+
         my_current_reputation = gs_manager.get_reputation()
+
+        self.logger.info(f"Atualizando requisição.")
 
         gs_manager.update_request_evaluation_data(
             request_id=request_id,
+            provider_id=node_id,
             behavior=conduct_applied,
             consistency=consistency,
             reliability=reliability,
@@ -514,6 +527,8 @@ class RequestNodeServiceTask(Service):
             new_cred=new_cred,
             reputation_evaluator=my_current_reputation
         )
+
+        self.logger.info(f"Finalizando requisição.")
 
         gs_manager.finalize_request(request_id, status)
 
