@@ -3,6 +3,7 @@
 import sqlite3
 import logging
 import json
+from contextlib import closing
 
 class GatewayStateManager:
     """
@@ -37,58 +38,59 @@ class GatewayStateManager:
         Garante a criação das estruturas transacionais no disco e a inicialização do estado padrão.
         """
         try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                
-                # 1. DDL: Criação da Tabela
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS gateway_properties (
-                        key TEXT PRIMARY KEY,
-                        reputation TEXT,
-                        behavior_changed TEXT,
-                        started_experiment_time DATETIME
+            with closing(self._get_connection()) as conn:
+                with conn:
+                    cursor = conn.cursor()
+                    
+                    # 1. DDL: Criação da Tabela
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS gateway_properties (
+                            key TEXT PRIMARY KEY,
+                            reputation TEXT,
+                            behavior_changed TEXT,
+                            started_experiment_time DATETIME
 
-                    )
-                ''')
+                        )
+                    ''')
 
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS requests (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        id_evaluator TEXT,
-                        id_provider TEXT,
-                        behavior TEXT,
-                        consistency REAL,
-                        reliability REAL,
-                        reputation_provider REAL,
-                        old_credibility_evaluator REAL,
-                        new_credibility_evaluator REAL,
-                        start_request_time DATETIME,
-                        finish_request_time DATETIME,
-                        reputation_evaluator REAL,
-                        status TEXT
-                    )
-                ''')
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS requests (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            id_evaluator TEXT,
+                            id_provider TEXT,
+                            behavior TEXT,
+                            consistency REAL,
+                            reliability REAL,
+                            reputation_provider REAL,
+                            old_credibility_evaluator REAL,
+                            new_credibility_evaluator REAL,
+                            start_request_time DATETIME,
+                            finish_request_time DATETIME,
+                            reputation_evaluator REAL,
+                            status TEXT
+                        )
+                    ''')
 
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS responses (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        id_request INTEGER,
-                        source TEXT,
-                        ip_source TEXT,
-                        target TEXT,
-                        services TEXT, -- Armazenado como JSON String
-                        group_name TEXT,
-                        FOREIGN KEY (id_request) REFERENCES requests (id)
-                    )
-                ''')
-                
-                # Inicializa a linha única com a chave fixa
-                cursor.execute('''
-                    INSERT OR IGNORE INTO gateway_properties (key, reputation, behavior_changed, started_experiment_time)
-                    VALUES (?, '0.5', 'False', CURRENT_TIMESTAMP)
-                ''', (self._STATE_KEY,))
-                
-                conn.commit()
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS responses (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            id_request INTEGER,
+                            source TEXT,
+                            ip_source TEXT,
+                            target TEXT,
+                            services TEXT, -- Armazenado como JSON String
+                            group_name TEXT,
+                            FOREIGN KEY (id_request) REFERENCES requests (id)
+                        )
+                    ''')
+                    
+                    # Inicializa a linha única com a chave fixa
+                    cursor.execute('''
+                        INSERT OR IGNORE INTO gateway_properties (key, reputation, behavior_changed, started_experiment_time)
+                        VALUES (?, '0.5', 'False', CURRENT_TIMESTAMP)
+                    ''', (self._STATE_KEY,))
+                    
+                    conn.commit()
 
         except Exception as e:
             self.logger.error(f"Erro crítico ao inicializar a base de dados de estado: {e}")
@@ -101,15 +103,16 @@ class GatewayStateManager:
         """Atualiza a reputação na linha fixa."""
 
         try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    INSERT INTO gateway_properties (key, reputation) 
-                    VALUES (?, ?)
-                    ON CONFLICT(key) 
-                    DO UPDATE SET reputation = excluded.reputation
-                ''', (self._STATE_KEY, str(float(reputation_value))))
-                conn.commit()
+            with closing(self._get_connection()) as conn:
+                with conn:
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                        INSERT INTO gateway_properties (key, reputation) 
+                        VALUES (?, ?)
+                        ON CONFLICT(key) 
+                        DO UPDATE SET reputation = excluded.reputation
+                    ''', (self._STATE_KEY, str(float(reputation_value))))
+                    conn.commit()
         except Exception as e:
             self.logger.error(f"Erro ao salvar reputação: {e}")
 
@@ -117,11 +120,12 @@ class GatewayStateManager:
         """Coleta a reputação e retorna como Float."""
 
         try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('SELECT reputation FROM gateway_properties WHERE key = ?', (self._STATE_KEY,))
-                row = cursor.fetchone()
-                return float(row[0]) if row and row[0] is not None else 0.5
+            with closing(self._get_connection()) as conn:
+                with conn:
+                    cursor = conn.cursor()
+                    cursor.execute('SELECT reputation FROM gateway_properties WHERE key = ?', (self._STATE_KEY,))
+                    row = cursor.fetchone()
+                    return float(row[0]) if row and row[0] is not None else 0.5
         except Exception as e:
             self.logger.error(f"Erro ao ler reputação: {e}")
             return 0.5
@@ -133,27 +137,29 @@ class GatewayStateManager:
     def set_behavior_changed(self, changed_status):
         """Atualiza a flag de conduta na linha fixa."""
         try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                str_status = str(bool(changed_status))
-                cursor.execute('''
-                    INSERT INTO gateway_properties (key, behavior_changed) 
-                    VALUES (?, ?)
-                    ON CONFLICT(key) 
-                    DO UPDATE SET behavior_changed = excluded.behavior_changed
-                ''', (self._STATE_KEY, str_status))
-                conn.commit()
+            with closing(self._get_connection()) as conn:
+                with conn:
+                    cursor = conn.cursor()
+                    str_status = str(bool(changed_status))
+                    cursor.execute('''
+                        INSERT INTO gateway_properties (key, behavior_changed) 
+                        VALUES (?, ?)
+                        ON CONFLICT(key) 
+                        DO UPDATE SET behavior_changed = excluded.behavior_changed
+                    ''', (self._STATE_KEY, str_status))
+                    conn.commit()
         except Exception as e:
             self.logger.error(f"Erro ao salvar behavior_changed: {e}")
 
     def get_behavior_changed(self):
         """Coleta a flag e retorna como Boolean."""
         try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('SELECT behavior_changed FROM gateway_properties WHERE key = ?', (self._STATE_KEY,))
-                row = cursor.fetchone()
-                return row[0] == 'True' if row and row[0] is not None else False
+            with closing(self._get_connection()) as conn:
+                with conn:
+                    cursor = conn.cursor()
+                    cursor.execute('SELECT behavior_changed FROM gateway_properties WHERE key = ?', (self._STATE_KEY,))
+                    row = cursor.fetchone()
+                    return row[0] == 'True' if row and row[0] is not None else False
         except Exception as e:
             self.logger.error(f"Erro ao ler behavior_changed: {e}")
             return False
@@ -165,13 +171,14 @@ class GatewayStateManager:
     def get_started_experiment_time(self):
         """Coleta a data e hora de início do experimento."""
         try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('SELECT started_experiment_time FROM gateway_properties WHERE key = ?', (self._STATE_KEY,))
-                row = cursor.fetchone()
-                
-                # Retorna a string do timestamp (ex: '2026-05-07 13:56:00')
-                return row[0] if row and row[0] is not None else None
+            with closing(self._get_connection()) as conn:
+                with conn:
+                    cursor = conn.cursor()
+                    cursor.execute('SELECT started_experiment_time FROM gateway_properties WHERE key = ?', (self._STATE_KEY,))
+                    row = cursor.fetchone()
+                    
+                    # Retorna a string do timestamp (ex: '2026-05-07 13:56:00')
+                    return row[0] if row and row[0] is not None else None
         except Exception as e:
             self.logger.error(f"Erro ao ler started_experiment_time: {e}")
             return None
@@ -188,23 +195,24 @@ class GatewayStateManager:
         Retorna o ID gerado pelo autoincremento.
         """
         try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                
-                # O ID é omitido para que o SQLite use o AUTOINCREMENT
-                # O status é fixado como 'WAITING_RESPONSES' conforme o requisito
-                cursor.execute('''
-                    INSERT INTO requests (id_evaluator, status, start_request_time) 
-                    VALUES (?, 'WAITING_RESPONSES', CURRENT_TIMESTAMP)
-                ''', (id_evaluator,))
-                
-                # Recupera o ID da linha recém-criada
-                request_id = cursor.lastrowid
-                
-                conn.commit()
-                
-                self.logger.info(f"Nova requisição de auditoria criada. ID: {request_id}")
-                return request_id
+            with closing(self._get_connection()) as conn:
+                with conn:
+                    cursor = conn.cursor()
+                    
+                    # O ID é omitido para que o SQLite use o AUTOINCREMENT
+                    # O status é fixado como 'WAITING_RESPONSES' conforme o requisito
+                    cursor.execute('''
+                        INSERT INTO requests (id_evaluator, status, start_request_time) 
+                        VALUES (?, 'WAITING_RESPONSES', CURRENT_TIMESTAMP)
+                    ''', (id_evaluator,))
+                    
+                    # Recupera o ID da linha recém-criada
+                    request_id = cursor.lastrowid
+                    
+                    conn.commit()
+                    
+                    self.logger.info(f"Nova requisição de auditoria criada. ID: {request_id}")
+                    return request_id
                 
         except Exception as e:
             self.logger.error(f"Erro ao criar registro de requisição na tabela requests: {e}")
@@ -217,15 +225,16 @@ class GatewayStateManager:
         Retorna uma tupla (id, status) ou (None, None) se a tabela estiver vazia.
         """
         try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                # Busca estritamente a última linha ordenada pelo autoincremento
-                cursor.execute('SELECT id, status FROM requests ORDER BY id DESC LIMIT 1')
-                row = cursor.fetchone()
-                
-                if row:
-                    return row[0], row[1]
-                return None, None
+            with closing(self._get_connection()) as conn:
+                with conn:
+                    cursor = conn.cursor()
+                    # Busca estritamente a última linha ordenada pelo autoincremento
+                    cursor.execute('SELECT id, status FROM requests ORDER BY id DESC LIMIT 1')
+                    row = cursor.fetchone()
+                    
+                    if row:
+                        return row[0], row[1]
+                    return None, None
                 
         except Exception as e:
             self.logger.error(f"Erro ao buscar o status da última requisição: {e}")
@@ -237,18 +246,19 @@ class GatewayStateManager:
         Retorna a string do formato DATETIME (ex: '2026-05-07 14:30:00') ou None se falhar.
         """
         try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                
-                # Busca estritamente a coluna start_request_time baseada no ID único
-                cursor.execute('SELECT start_request_time FROM requests WHERE id = ?', (request_id,))
-                row = cursor.fetchone()
-                
-                # Verifica se a linha existe e se o valor não é nulo
-                if row and row[0] is not None:
-                    return row[0]
-                
-                return None
+            with closing(self._get_connection()) as conn:
+                with conn:
+                    cursor = conn.cursor()
+                    
+                    # Busca estritamente a coluna start_request_time baseada no ID único
+                    cursor.execute('SELECT start_request_time FROM requests WHERE id = ?', (request_id,))
+                    row = cursor.fetchone()
+                    
+                    # Verifica se a linha existe e se o valor não é nulo
+                    if row and row[0] is not None:
+                        return row[0]
+                    
+                    return None
                 
         except Exception as e:
             self.logger.error(f"Erro ao buscar o tempo de início para o ID {request_id}: {e}")
@@ -260,25 +270,26 @@ class GatewayStateManager:
         Retorna True se a atualização for bem-sucedida e a linha existir, False caso contrário.
         """
         try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                
-                # Executa a atualização focada apenas na coluna status
-                cursor.execute('''
-                    UPDATE requests 
-                    SET status = ? 
-                    WHERE id = ?
-                ''', (new_status, request_id))
-                
-                conn.commit()
-                
-                # O rowcount verifica quantas linhas foram fisicamente alteradas no disco
-                if cursor.rowcount > 0:
-                    self.logger.info(f"Status da requisição {request_id} atualizado para '{new_status}'.")
-                    return True
-                else:
-                    self.logger.warning(f"Tentativa de atualizar status falhou: ID {request_id} não encontrado.")
-                    return False
+            with closing(self._get_connection()) as conn:
+                with conn:
+                    cursor = conn.cursor()
+                    
+                    # Executa a atualização focada apenas na coluna status
+                    cursor.execute('''
+                        UPDATE requests 
+                        SET status = ? 
+                        WHERE id = ?
+                    ''', (new_status, request_id))
+                    
+                    conn.commit()
+                    
+                    # O rowcount verifica quantas linhas foram fisicamente alteradas no disco
+                    if cursor.rowcount > 0:
+                        self.logger.info(f"Status da requisição {request_id} atualizado para '{new_status}'.")
+                        return True
+                    else:
+                        self.logger.warning(f"Tentativa de atualizar status falhou: ID {request_id} não encontrado.")
+                        return False
                     
         except Exception as e:
             self.logger.error(f"Erro ao atualizar status da requisição {request_id}: {e}")
@@ -291,14 +302,15 @@ class GatewayStateManager:
         Retorna apenas a string do status.
         """
         try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('SELECT status FROM requests WHERE id = ?', (request_id,))
-                row = cursor.fetchone()
-                
-                if row:
-                    return row[0]
-                return None
+            with closing(self._get_connection()) as conn:
+                with conn:
+                    cursor = conn.cursor()
+                    cursor.execute('SELECT status FROM requests WHERE id = ?', (request_id,))
+                    row = cursor.fetchone()
+                    
+                    if row:
+                        return row[0]
+                    return None
                 
         except Exception as e:
             self.logger.error(f"Erro ao buscar o status para o ID {request_id}: {e}")
@@ -310,22 +322,23 @@ class GatewayStateManager:
         e o timestamp exato da conclusão.
         """
         try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                
-                # Atualiza o status e usa o relógio do SQLite (UTC) para o tempo de término
-                cursor.execute('''
-                    UPDATE requests 
-                    SET status = ?, finish_request_time = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                ''', (final_status, request_id))
-                
-                conn.commit()
-                
-                if cursor.rowcount > 0:
-                    self.logger.info(f"Requisição {request_id} finalizada com status '{final_status}'.")
-                    return True
-                return False
+            with closing(self._get_connection()) as conn:
+                with conn:
+                    cursor = conn.cursor()
+                    
+                    # Atualiza o status e usa o relógio do SQLite (UTC) para o tempo de término
+                    cursor.execute('''
+                        UPDATE requests 
+                        SET status = ?, finish_request_time = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                    ''', (final_status, request_id))
+                    
+                    conn.commit()
+                    
+                    if cursor.rowcount > 0:
+                        self.logger.info(f"Requisição {request_id} finalizada com status '{final_status}'.")
+                        return True
+                    return False
                 
         except Exception as e:
             self.logger.error(f"Erro ao finalizar a requisição {request_id}: {e}")
@@ -339,20 +352,21 @@ class GatewayStateManager:
         após o consumo e avaliação do serviço.
         """
         try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    UPDATE requests 
-                    SET behavior = ?, consistency = ?, reliability = ?, 
-                        reputation_provider = ?, old_credibility_evaluator = ?, 
-                        new_credibility_evaluator = ?, reputation_evaluator = ?, id_provider = ?
-                    WHERE id = ?
-                ''', (behavior, consistency, reliability, reputation_provider, 
-                      old_cred, new_cred, reputation_evaluator, provider_id, request_id))
-                conn.commit()
-                
-                if cursor.rowcount > 0:
-                    self.logger.info(f"Dados de avaliação gravados com sucesso para a requisição {request_id}.")
+            with closing(self._get_connection()) as conn:
+                with conn:
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                        UPDATE requests 
+                        SET behavior = ?, consistency = ?, reliability = ?, 
+                            reputation_provider = ?, old_credibility_evaluator = ?, 
+                            new_credibility_evaluator = ?, reputation_evaluator = ?, id_provider = ?
+                        WHERE id = ?
+                    ''', (behavior, consistency, reliability, reputation_provider, 
+                        old_cred, new_cred, reputation_evaluator, provider_id, request_id))
+                    conn.commit()
+                    
+                    if cursor.rowcount > 0:
+                        self.logger.info(f"Dados de avaliação gravados com sucesso para a requisição {request_id}.")
         except Exception as e:
             self.logger.error(f"Erro ao atualizar dados de avaliação do request {request_id}: {e}")
 
@@ -367,19 +381,20 @@ class GatewayStateManager:
         O campo services_list deve ser uma lista de tuplas/dicionários.
         """
         try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                
-                # Converte a lista de serviços para JSON para persistência
-                services_json = json.dumps(services_list)
-                
-                cursor.execute('''
-                    INSERT INTO responses (id_request, source, ip_source, target, services, group_name)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (id_request, source, ip_source, target, services_json, group_name))
-                
-                conn.commit()
-                return cursor.lastrowid
+            with closing(self._get_connection()) as conn:
+                with conn:
+                    cursor = conn.cursor()
+                    
+                    # Converte a lista de serviços para JSON para persistência
+                    services_json = json.dumps(services_list)
+                    
+                    cursor.execute('''
+                        INSERT INTO responses (id_request, source, ip_source, target, services, group_name)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    ''', (id_request, source, ip_source, target, services_json, group_name))
+                    
+                    conn.commit()
+                    return cursor.lastrowid
         except Exception as e:
             self.logger.error(f"Erro ao salvar resposta do nó {source}: {e}")
             return None
@@ -389,22 +404,23 @@ class GatewayStateManager:
         Retorna todas as respostas recebidas para um ID de requisição específico.
         """
         try:
-            with self._get_connection() as conn:
-                import sqlite3
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                
-                cursor.execute('SELECT * FROM responses WHERE id_request = ?', (id_request,))
-                rows = cursor.fetchall()
-                
-                results = []
-                for row in rows:
-                    item = dict(row)
-                    # Converte o JSON de volta para lista Python
-                    item['services'] = json.loads(item['services'])
-                    results.append(item)
+            with closing(self._get_connection()) as conn:
+                with conn:
+                    import sqlite3
+                    conn.row_factory = sqlite3.Row
+                    cursor = conn.cursor()
                     
-                return results
+                    cursor.execute('SELECT * FROM responses WHERE id_request = ?', (id_request,))
+                    rows = cursor.fetchall()
+                    
+                    results = []
+                    for row in rows:
+                        item = dict(row)
+                        # Converte o JSON de volta para lista Python
+                        item['services'] = json.loads(item['services'])
+                        results.append(item)
+                        
+                    return results
         except Exception as e:
             self.logger.error(f"Erro ao buscar respostas para o pedido {id_request}: {e}")
             return []
@@ -422,17 +438,18 @@ class GatewayStateManager:
         """
 
         try:
-            with self._get_connection() as conn:
-                # Transforma o retorno padrão em Dicionário
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                
-                cursor.execute('SELECT * FROM gateway_properties WHERE key = ?', (self._STATE_KEY,))
-                row = cursor.fetchone()
-                
-                # Converte o objeto Row nativo para um dicionário padrão do Python
-                return dict(row) if row else {}
-                
+            with closing(self._get_connection()) as conn:
+                with conn:
+                    # Transforma o retorno padrão em Dicionário
+                    conn.row_factory = sqlite3.Row
+                    cursor = conn.cursor()
+                    
+                    cursor.execute('SELECT * FROM gateway_properties WHERE key = ?', (self._STATE_KEY,))
+                    row = cursor.fetchone()
+                    
+                    # Converte o objeto Row nativo para um dicionário padrão do Python
+                    return dict(row) if row else {}
+                    
         except Exception as e:
             self.logger.error(f"Erro ao ler todas as propriedades: {e}")
             return {}
@@ -443,17 +460,18 @@ class GatewayStateManager:
         """
 
         try:
-            with self._get_connection() as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                
-                # Coleta todo o histórico, ordenado cronologicamente pelo ID
-                cursor.execute('SELECT * FROM requests ORDER BY id ASC')
-                rows = cursor.fetchall()
-                
-                # Cria uma lista de dicionários com todos os dados
-                return [dict(row) for row in rows]
-                
+            with closing(self._get_connection()) as conn:
+                with conn:
+                    conn.row_factory = sqlite3.Row
+                    cursor = conn.cursor()
+                    
+                    # Coleta todo o histórico, ordenado cronologicamente pelo ID
+                    cursor.execute('SELECT * FROM requests ORDER BY id ASC')
+                    rows = cursor.fetchall()
+                    
+                    # Cria uma lista de dicionários com todos os dados
+                    return [dict(row) for row in rows]
+                    
         except Exception as e:
             self.logger.error(f"Erro ao ler todas as requisições: {e}")
             return []
@@ -464,30 +482,31 @@ class GatewayStateManager:
         Faz o parse automático da string JSON da coluna 'services'.
         """
         try:
-            with self._get_connection() as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                
-                # Coleta todo o histórico de respostas
-                cursor.execute('SELECT * FROM responses ORDER BY id ASC')
-                rows = cursor.fetchall()
-                
-                responses_list = []
-                for row in rows:
-                    row_dict = dict(row)
+            with closing(self._get_connection()) as conn:
+                with conn:
+                    conn.row_factory = sqlite3.Row
+                    cursor = conn.cursor()
                     
-                    # Desserializa a JSON String para recuperar a estrutura de dados original
-                    services_str = row_dict.get('services')
-                    if services_str:
-                        try:
-                            row_dict['services'] = json.loads(services_str)
-                        except json.JSONDecodeError:
-                            # Mantém como string caso haja uma anomalia na gravação
-                            pass 
-                            
-                    responses_list.append(row_dict)
+                    # Coleta todo o histórico de respostas
+                    cursor.execute('SELECT * FROM responses ORDER BY id ASC')
+                    rows = cursor.fetchall()
                     
-                return responses_list
+                    responses_list = []
+                    for row in rows:
+                        row_dict = dict(row)
+                        
+                        # Desserializa a JSON String para recuperar a estrutura de dados original
+                        services_str = row_dict.get('services')
+                        if services_str:
+                            try:
+                                row_dict['services'] = json.loads(services_str)
+                            except json.JSONDecodeError:
+                                # Mantém como string caso haja uma anomalia na gravação
+                                pass 
+                                
+                        responses_list.append(row_dict)
+                        
+                    return responses_list
                 
         except Exception as e:
             self.logger.error(f"Erro ao ler todas as respostas: {e}")
