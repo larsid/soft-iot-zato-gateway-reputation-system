@@ -157,7 +157,7 @@ class CheckNodesServicesTask(Service):
                 if time_difference.total_seconds() > 120:
                     self.logger.warning(f"TIMEOUT: A requisição {last_id} excedeu o limite com status {last_status}!")
                     
-                    gs_manager.update_request_status(last_id, 'TIMEOUT')
+                    gs_manager.finalize_request(last_id, 'TIMEOUT')
                     
                 else:
                     self.logger.info(f"Requisição {last_id} em andamento.")
@@ -217,13 +217,13 @@ class CheckNodesServicesTask(Service):
             
             else:
                 self.logger.warning(f"Falha na rede ao publicar requisição: {res}")
-                gs_manager.update_request_status(request_id, 'FAILED')
+                gs_manager.finalize_request(request_id, 'FAILED')
                 self.response.payload = {"status": "Tangle write failed", "tangle_response": res}
                 return
                 
         except Exception as e:
             self.logger.error(f"Erro crítico ao solicitar serviço: {e}")
-            gs_manager.update_request_status(request_id, 'FAILED')
+            gs_manager.finalize_request(request_id, 'FAILED')
             self.response.payload = {"status": "Internal Error"}
             return
 
@@ -291,7 +291,7 @@ class SelectBestNodeTask(Service):
         
         if not responses:
             self.logger.warning(f"Nenhuma resposta recebida para a requisição {request_id}.")
-            gs_manager.update_request_status(request_id, 'FAILED')
+            gs_manager.finalize_request(request_id, 'FAILED')
             return
 
         # Estruturando dados das respostas
@@ -341,7 +341,7 @@ class SelectBestNodeTask(Service):
 
         if not candidates_ranking:
             self.logger.error("Falha ao gerar ranking.")
-            gs_manager.update_request_status(request_id, 'FAILED')
+            gs_manager.finalize_request(request_id, 'FAILED')
             return
 
         # 5. Seleção do Vencedor
@@ -375,6 +375,7 @@ class RequestNodeServiceTask(Service):
         
         if not request_id or not best_node:
             self.logger.error("Falha: 'request_id' ou 'best_node' não fornecidos para consumo de dados.")
+            gs_manager.finalize_request(request_id, 'FAILED')
             return
 
         gs_manager = GatewayStateManager()
@@ -453,10 +454,12 @@ class RequestNodeServiceTask(Service):
             raw_service_evaluation = 1
             raw_evaluation_value = 1.0
             status = 'FINISHED'
+            self.logger.info(f"[AVALIAÇÃO PROVEDOR] Dados válidos recebidos. Nota bruta: {raw_evaluation_value}")
         else:
             raw_service_evaluation = 0
             raw_evaluation_value = 0.0
             status = 'FAILED_DATA_CONSUMPTION'
+            self.logger.warning(f"[AVALIAÇÃO PROVEDOR] Falha ao consumir dados (possível falsificação). Nota bruta reduzida para: {raw_evaluation_value}")
 
         self.logger.info(f"O status será: {status}.")
 
@@ -488,6 +491,22 @@ class RequestNodeServiceTask(Service):
         new_cred = cred_res.get('new_credibility', 0.5)
         reliability = cred_res.get('reliability', 1.0)
         consistency = cred_res.get('consistency', 1.0)
+
+        # Atualização da credibilidade do nó avaliador
+        try:
+            cred_transaction = {
+                "type": "CRED_UPDATE",
+                "evaluator_id": id_evaluator,
+                "credibility": float(new_cred)
+            }
+            
+            self.invoke('soft-iot.dlt.client.api.write', {
+                "index": f"CRED_{id_evaluator}",
+                "data": cred_transaction
+            })
+            self.logger.info(f"Nova credibilidade ({new_cred}) salva na Tangle para o avaliador {id_evaluator}.")
+        except Exception as e:
+            self.logger.error(f"Erro ao salvar credibilidade na Tangle: {e}")
 
         # Publicação na Tangle. Ignora se for egoísta
         if conduct_applied != 'SELFISH':
