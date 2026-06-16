@@ -128,11 +128,15 @@ class CredibilityManager(Service):
             
         # Validação de Defesa: Verifica se retornou dados válidos
         if isinstance(tangle_res, list) and tangle_res:
-
             data_block = tangle_res[0].get('data')
             
+            if isinstance(data_block, str):
+                try:
+                    data_block = json.loads(data_block)
+                except json.JSONDecodeError:
+                    data_block = {}
+            
             if isinstance(data_block, dict):
-                # Tenta pegar a credibilidade, se não existir mantém 0.5
                 current_cred = data_block.get('credibility', 0.5)
                 self.logger.info(f"Credibilidade recuperada para {evaluator_id}: {current_cred}")
 
@@ -149,8 +153,14 @@ class CredibilityManager(Service):
                 for tx in provider_history:
                     tx_data = tx.get('data')
                     
+                    # Defesa extra idêntica ao Orchestrator
+                    if isinstance(tx_data, str):
+                        try:
+                            tx_data = json.loads(tx_data)
+                        except json.JSONDecodeError:
+                            tx_data = {}
+                    
                     if isinstance(tx_data, dict):
-                        # Verifica se é do tipo certo e se o 'source' é o nosso avaliador
                         if tx_data.get('type') == 'REP_EVALUATION' and tx_data.get('source') == evaluator_id:
                             last_evaluation_given = tx_data.get('serviceEvaluation')
                             break  # Encontrou a ocorrência mais recente, interrompe o loop
@@ -170,8 +180,10 @@ class CredibilityManager(Service):
         consistency = 1.0 - abs(evaluation_given - last_evaluation_given)
 
         # Limiares de decisão via variáveis de ambiente 
-        RELIABILITY_THRESHOLD = float(os.environ.get('Zato_RELIABILITY_THRESHOLD', '0.75'))
-        CONSISTENCY_THRESHOLD = float(os.environ.get('Zato_CONSISTENCY_THRESHOLD', '0.75'))
+        RELIABILITY_THRESHOLD = float(os.environ.get('Zato_RELIABILITY_THRESHOLD', '0.5'))
+        CONSISTENCY_THRESHOLD = float(os.environ.get('Zato_CONSISTENCY_THRESHOLD', '0.5'))
+
+        MIN_STEP = 0.01
 
         new_cred = current_cred
 
@@ -180,16 +192,23 @@ class CredibilityManager(Service):
 
         # Cenário ideal
         if is_reliable and is_consistent:
-            new_cred = new_cred + (new_cred * 0.1)
+            ajuste = max(abs(current_cred) * 0.10, MIN_STEP)
+            new_cred = current_cred + ajuste
+
         # Apenas consenso com a avaliação da rede
         elif is_reliable:
-            new_cred = new_cred + (new_cred * 0.05)
+            ajuste = max(abs(current_cred) * 0.05, MIN_STEP)
+            new_cred = current_cred + ajuste
+
         # Apenas consenso com a avaliação anterior do próprio nó
         elif is_consistent:
-            new_cred = new_cred - (new_cred * 0.05)
+            ajuste = max(abs(current_cred) * 0.05, MIN_STEP)
+            new_cred = current_cred - ajuste
+
         # As duas métricas são maiores que o limite
         else:
-            new_cred = new_cred - (new_cred * 0.1)
+            ajuste = max(abs(current_cred) * 0.10, MIN_STEP)
+            new_cred = current_cred - ajuste
 
         if new_cred > 1.0:
             new_cred = 1.0
