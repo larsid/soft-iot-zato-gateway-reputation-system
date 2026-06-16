@@ -7,6 +7,7 @@ import logging
 
 from soft_iot_id_manager import IDManager
 from soft_iot_gateway_state import GatewayStateManager
+from soft_iot_node_type import NodeTypeManager
 
 import zmq.green as zmq
 
@@ -186,21 +187,41 @@ class ZMQRequestHandlerService(Service):
 
         logger.info(f"Processando requisição de serviço '{requested_service}' do nó {requester_id}.")
 
-        devices = self._load_devices_from_file()
+        nt_manager = NodeTypeManager()
+        gs_manager = GatewayStateManager()
+        
+        # Sincroniza a conduta atual baseada no estado do gateway
+        behavior_changed = gs_manager.get_behavior_changed()
+        nt_manager.define_conduct(behavior_changed)
+        current_conduct = nt_manager.current_conduct
 
-        # Buscando sensores com serviço requisitado
         matched_services = []
 
-        for device in devices:
-            device_id = device.get('id')
-            sensors = device.get('sensors', [])
+        if current_conduct == "MALICIOUS":
+            logger.warning(f"Conduta MALICIOSA ativa: Ocultando sensores reais e publicando falsos para '{requested_service}'.")
             
-            for sensor in sensors:
-                if sensor.get('type') == requested_service:
-                    matched_services.append({
-                        "device_id": device_id,
-                        "sensor_id": sensor.get('id')
-                    })
+            # Adiciona estritamente o dispositivo e sensor inexistentes (Spoofing)
+            matched_services.append({
+                "device_id": "nonexistentDevice",
+                "sensor_id": "nonexistentSensor"
+            })
+
+        else:
+            # Conduta HONEST, SELFISH ou Perturbador antes da mudança
+            logger.info("Conduta regular ativa: Buscando sensores reais no arquivo local.")
+            devices = self._load_devices_from_file()
+
+            # Buscando sensores reais com serviço requisitado
+            for device in devices:
+                device_id = device.get('id')
+                sensors = device.get('sensors', [])
+                
+                for sensor in sensors:
+                    if sensor.get('type') == requested_service:
+                        matched_services.append({
+                            "device_id": device_id,
+                            "sensor_id": sensor.get('id')
+                        })
         
         if matched_services:
             logger.info(f"Encontrados {len(matched_services)} sensores compatíveis. Preparando REP_SVC_RES.")
