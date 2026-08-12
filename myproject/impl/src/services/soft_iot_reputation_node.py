@@ -80,8 +80,13 @@ class ReputationOrchestrator(Service):
             trusted_evaluations = valid_evaluations  # Fallback de segurança
 
         # 4. Calcula a Reputação Final: Média aritmética das avaliações dos nós presentes no cluster confiável
-        soma_valores = sum(ev['value'] for ev in trusted_evaluations)
-        final_reputation = soma_valores / len(trusted_evaluations)
+        # soma_valores = sum(ev['value'] for ev in trusted_evaluations)
+        # final_reputation = soma_valores / len(trusted_evaluations)
+
+        soma_valores = sum(ev['value'] for ev in trusted_evaluations) + 0.5
+        total_avaliacoes = len(trusted_evaluations) + 1
+
+        final_reputation = soma_valores / total_avaliacoes
 
         # Garante o limite estrito do intervalo [-1.0, 1.0]
         final_reputation = max(-1.0, min(1.0, final_reputation))
