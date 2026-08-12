@@ -240,7 +240,7 @@ class WaitNodesResponsesTask(Service):
         request_id = payload.get('request_id')
         
         # Define o tempo da janela de coleta (ex: 15 segundos)
-        wait_time = payload.get('wait_time', 15) 
+        wait_time = payload.get('wait_time', 10) 
 
         if not request_id:
             self.logger.error("Falha Crítica: Nenhum ID de requisição fornecido para a tarefa de espera.")
