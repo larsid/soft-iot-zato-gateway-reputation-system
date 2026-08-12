@@ -230,12 +230,14 @@ external_scheduler:
   - name: "Requisição de serviços"
     url: "http://localhost:11223/soft-iot/reputation/task/check-nodes-services"
     job_type: "interval_based"
-    initial_delay: 40
+    interval: 20
+    unit: "seconds"
 
   - name: "Cálculo da reputação atual"
     url: "http://localhost:11223/soft-iot/reputation/task/calculate-reputation"
     job_type: "interval_based"
-    initial_delay: 40
+    interval: 20
+    unit: "seconds"
 
   
 
